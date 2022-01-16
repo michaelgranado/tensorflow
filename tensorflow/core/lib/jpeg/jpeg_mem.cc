@@ -1,4 +1,4 @@
-/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,6 +15,16 @@ limitations under the License.
 
 // This file defines functions to compress and uncompress JPEG data
 // to and from memory, as well as some direct manipulations of JPEG string
+
+#define RLBOX_SINGLE_THREADED_INVOCATIONS
+#define RLBOX_USE_STATIC_CALLS() rlbox_noop_sandbox_lookup_symbol
+
+#include <stdio.h>
+#include "mylib.h"
+#include "rlbox.hpp"
+#include "rlbox_noop_sandbox.hpp"
+
+using namespace rlbox;
 
 #include "tensorflow/core/lib/jpeg/jpeg_mem.h"
 
@@ -553,6 +563,10 @@ uint8* Uncompress(const void* srcdata, int datasize,
 // Returns true on success; false on failure.
 bool GetImageInfo(const void* srcdata, int datasize, int* width, int* height,
                   int* components) {
+  // Create a new sandbox
+  rlbox::rlbox_sandbox<rlbox_noop_sandbox> sandbox;
+  sandbox.create_sandbox();
+
   // Init in case of failure
   if (width) *width = 0;
   if (height) *height = 0;
