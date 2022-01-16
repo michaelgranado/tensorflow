@@ -330,6 +330,15 @@ class HloDotDumper {
 
   std::string Dump();
 
+  // Returns a CSS id assigned to the instruction, if that exists.
+  absl::optional<std::string> CssIdForInstruction(const HloInstruction& instr) {
+    auto it = node_ids_.find(&instr);
+    if (it == node_ids_.end()) {
+      return absl::nullopt;
+    }
+    return StrCat("node", it->second);
+  }
+
  private:
   // Returns the dot graph identifier for the given instruction.
   std::string InstructionId(const HloInstruction* instruction) {
@@ -1609,6 +1618,9 @@ static const char* kRenderDotJS = R"(
   <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.0/dist/svg-pan-zoom.min.js"
      integrity="sha384-3008WpYB2pOBvE7lwkrKf+qTmbTPGGPYxA9C1YVhvbPukns4ZFj7E98QPLkNW9dS"
      crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@hpcc-js/wasm/dist/index.min.js"
+     integrity="sha384-X+8WXyWZ+W2gUHiSSj0aePAkE77Fl6eZ+QIByw+Ii8LzWEJ/W8bI8M4RkneDAJ4D"
+     crossorigin="anonymous"></script>
 )";
 
 std::string WrapDotInHtml(absl::string_view dot) {
@@ -1729,32 +1741,26 @@ namespace {
 
 // Fusion state: a sequence of rendered graphs in DOT formats with explanations.
 // Rendered graphs can be shared across frames, hence the storage indirection.
-//
-// Additionally, performs escaping: DOT graphs can't contain backquotes, and
-// labels can't contain quotes.
 struct FusionVisualizerProgress {
-  // Creates a frame reusing last rendered graph.
-  void RegisterFusionStateUnchanged(absl::string_view explanation) {
-    frames.push_back(
-        std::make_pair(dot_graphs.size() - 1,
-                       absl::StrReplaceAll(explanation, {{"\"", "|"}})));
-  }
-
-  // Creates a frame with a new rendered graph. In this case `explanation` is
-  // only interesting if the state actually changes, we ignore this frame
-  // otherwise.
-  void RegisterFusionStateChanged(absl::string_view dot,
-                                  absl::string_view explanation) {
+  // Creates a frame with a new rendered graph.
+  void AddState(absl::string_view dot, absl::string_view explanation,
+                absl::optional<std::string> to_highlight) {
     if (dot_graphs.empty() || dot_graphs.back() != dot) {
-      dot_graphs.push_back(absl::StrReplaceAll(dot, {{"`", "|"}}));
-      RegisterFusionStateUnchanged(explanation);
+      dot_graphs.push_back(std::string(dot));
     }
+    frames.push_back({static_cast<int>(dot_graphs.size() - 1),
+                      std::string(explanation), to_highlight.value_or("")});
   }
 
   std::vector<std::string> dot_graphs;
 
-  // Each frame: label + counter into a dot graph.
-  std::vector<std::pair<int, std::string>> frames;
+  struct FusionFrame {
+    int dot_graph;
+    std::string label;
+    std::string to_highlight;
+  };
+
+  std::vector<FusionFrame> frames;
 };
 
 }  // namespace
@@ -1781,6 +1787,8 @@ static std::string EscapeJSTemplateString(absl::string_view s) {
 // nullptr.
 StatusOr<std::string> WrapFusionExplorer(const HloComputation& computation) {
   tensorflow::mutex_lock lock(fusion_visualizer_state_mu);
+  using absl::StrAppend;
+  using absl::StrFormat;
   const FusionVisualizerProgress& visualizer_progress =
       fusion_visualizer_states[FusionVisualizerStateKey(computation)];
   if (visualizer_progress.frames.empty()) {
@@ -1795,37 +1803,59 @@ StatusOr<std::string> WrapFusionExplorer(const HloComputation& computation) {
   <meta charset="utf-8">
   <style>
     html, body {height: 100%; text-align: center;}
-    #rendered {height: 80%; width: 80%; border:1px solid black; margin: auto; }
+    #rendered {height: 70%; width: 80%; border:1px solid black; margin: auto; }
+    #label {width: 80%; margin: auto;}
+    #performance_note { font-size: small; color: gray; }
+    #frames_list {
+      list-style: none; text-align: left; height: 20%; overflow: scroll;
+    }
+    #frames_list   li { padding: 0.2em; margin: 0.2em; }
+    .selected { background-color: #e0e0e0; }
+    .selected a { color: black; text-decoration: none; }
+    #rendered svg { height: 100% !important; width: 100% !important; }
   </style>
 </head>
 <body>
   $JS_INCLUDE
 
   <title>Fusion Explorer: $TITLE</title>
-  <div id='rendered' width=80% height=80%></div>
-  <p id='label'></p>
-  <p id='description'></p>
+  <div id='rendered'></div>
+  <ul id='frames_list'></ul>
   <p>
     <a id='prev' href='#'>Prev Step</a>
     <a id='next' href='#'>Next Step</a>
   </p>
   <p>Use j/k for keyboard navigation.</p>
+  <p id='performance_note'></p>
   <script>
   <!--
-  var currId = -1;
-  var dots = [$DOTS];
-  var frames = [$FRAMES];
-  var viz = new Viz();
+  var currId = 0;
+  var renderCache = {};
+
   var cssregex = new RegExp('stylesheet=<([^]*)\n>\n', 'gm');
+  var hpccWasm = window["@hpcc-js/wasm"];
+
+  var getIdFromHash = function() {
+    var hash = window.location.hash;
+    return parseInt(hash.substring('#frame'.length, hash.length));
+  }
 
   var renderFrame = function() {
+    var frames_list = document.getElementById('frames_list');
+
+    for (let selected of frames_list.getElementsByClassName('selected')) {
+        selected.classList.remove('selected');
+    }
+
+    var selected = frames_list.children[currId];
+    selected.classList.add('selected');
+    selected.scrollIntoView();
+
     var frame = frames[currId];
-    var dot_txt = dots[frame[0]];
+    var dot_ptr = frame[0];
+    var dot_txt = dots[dot_ptr];
     var label = frame[1];
-    document.getElementById('label').innerText = label;
-
-    document.getElementById.innerText = "Loading...";
-
+    document.getElementById('performance_note').innerText = "Rendering...";
     var results = cssregex.exec(dot_txt)
     var css_data = ''
     if (results !== null) {
@@ -1836,48 +1866,36 @@ StatusOr<std::string> WrapFusionExplorer(const HloComputation& computation) {
         dot_txt = dot_txt.replace(cssregex, ''); // Remove the stylesheet
     }
 
-    viz.renderSVGElement(dot_txt).then(function(svg) {
-      var style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
-      style.appendChild(document.createTextNode(css_data));
-      svg.setAttribute('width', '100%');
-      svg.setAttribute('height', '100%');
-      svg.setAttribute('id', 'graph');
-      svg.appendChild(style);
-
+    var render_start = performance.now();
+    var render_callback = function(svg) {
+      renderCache[dot_ptr] = svg;
       var area = document.getElementById('rendered');
-      var existing = area.firstElementChild;
-      if (existing == null) {
-        area.appendChild(svg);
-      } else {
-        area.replaceChild(svg, existing);
+      area.innerHTML = `${svg}<style>${css_data}</style>`;
+      var panzoom = svgPanZoom(area.children[0], {
+          zoomEnabled: true, controlIconsEnabled: true, });
+      var to_highlight = frame[2].length ?
+        document.querySelector(`#${frame[2]} polygon`) : null;
+      if (to_highlight) {
+        to_highlight.style.setProperty('fill', 'red');
       }
-      var panzoom = svgPanZoom(svg, {
-          zoomEnabled: true,
-          controlIconsEnabled: true,
-      });
-      document.getElementsByTagName('BODY')[0].onresize = function() {
-          panzoom.resize();
-          panzoom.fit();
-          panzoom.center();
-      };
-    });
+      document.getElementById('performance_note').innerText =
+        `Rendering took ${(performance.now() - render_start).toFixed(2)}ms`;
+    };
+    if (renderCache[dot_ptr]) {
+      render_callback(renderCache[dot_ptr]);
+    } else {
+      hpccWasm.graphviz.layout(dot_txt, "svg", "dot").then(render_callback);
+    }
   };
+
+  window.addEventListener('hashchange', function() {
+    currId = getIdFromHash();
+    renderFrame();
+  });
 
   var update = function(delta)  {
     currId = (currId + delta + frames.length) % frames.length;
-    document.getElementById('description').innerText =
-      `Frame # ${currId + 1} / ${frames.length}`;
-    renderFrame();
-  };
-
-  document.getElementById('prev').onclick = function() {
-    update(-1);
-    return false;
-  };
-
-  document.getElementById('next').onclick = function() {
-    update(1);
-    return false;
+    window.location.hash = `#frame${currId}`
   };
 
   window.addEventListener("keydown", function (event) {
@@ -1894,26 +1912,55 @@ StatusOr<std::string> WrapFusionExplorer(const HloComputation& computation) {
     event.preventDefault();
   }, true);
 
+  var renderFrameList = function() {
+    var frames_list = document.getElementById('frames_list');
+
+    for (let i=0; i<frames.length; i++) {
+      var f = frames[i];
+      var frame_descr = f[1];
+      var rendered = document.createElement("li");
+      if (frame_descr == "") {
+        frame_descr = "Unnamed state";
+      }
+      rendered.innerHTML = `<a href="#frame${i}">${frame_descr}</a>`;
+      if (i == currId) {
+        rendered.classList.add('selected');
+      }
+      frames_list.appendChild(rendered);
+    }
+  };
+
   document.addEventListener("DOMContentLoaded", function() {
-    update(1);
+    if (window.location.hash.indexOf('frame') != -1) {
+      currId = getIdFromHash();
+    }
+    renderFrameList();
+    renderFrame();
   });
+
+  var dots = [$DOTS];
+  var frames = [$FRAMES];
 
   //-->
   </script>
+  </body>
+</html>
   )",
       {{"$JS_INCLUDE", kRenderDotJS},
        {"$DOTS", absl::StrJoin(visualizer_progress.dot_graphs, ", ",
                                [&](std::string* out, const std::string& dot) {
-                                 absl::StrAppend(out, "String.raw`",
-                                                 EscapeJSTemplateString(dot),
-                                                 "`");
+                                 StrAppend(out, "String.raw`",
+                                           EscapeJSTemplateString(dot), "`");
                                })},
-       {"$FRAMES", absl::StrJoin(visualizer_progress.frames, ", ",
-                                 [&](std::string* out, const auto& p) {
-                                   absl::StrAppend(
-                                       out, "[", p.first, ", String.raw`",
-                                       EscapeJSTemplateString(p.second), "`]");
-                                 })},
+       {"$FRAMES",
+        absl::StrJoin(
+            visualizer_progress.frames, ", ",
+            [&](std::string* out, const auto& p) {
+              StrAppend(out,
+                        StrFormat("[%d, String.raw`%s`, String.raw`%s`]",
+                                  p.dot_graph, EscapeJSTemplateString(p.label),
+                                  EscapeJSTemplateString(p.to_highlight)));
+            })},
        {"$TITLE",
         absl::StrCat(computation.parent()->name(), "_", computation.name())}});
 }
@@ -1959,21 +2006,34 @@ void RegisterGraphToURLRenderer(
 }
 
 Status RegisterFusionState(const HloComputation& computation,
-                           absl::string_view label, bool changed) {
+                           absl::string_view label,
+                           const HloInstruction& consumer,
+                           const HloInstruction* producer) {
   tensorflow::mutex_lock lock(fusion_visualizer_state_mu);
   FusionVisualizerProgress& fusion_progress =
       fusion_visualizer_states[FusionVisualizerStateKey(computation)];
-  if (!changed) {
-    fusion_progress.RegisterFusionStateUnchanged(label);
-    return Status::OK();
+
+  // Radius size in which to render.
+  static constexpr int kRenderRadius = 4;
+
+  absl::flat_hash_set<const HloInstruction*> render_boundary;
+  for (const HloInstruction* user : consumer.users()) {
+    render_boundary.insert(user);
   }
-  TF_ASSIGN_OR_RETURN(
-      std::string dot_graph,
-      RenderGraph(computation, "",
-                  /*debug_options=*/{}, xla::RenderedGraphFormat::kDot,
-                  /*hlo_execution_profile=*/nullptr,
-                  /*hlo_render_options=*/{}));
-  fusion_progress.RegisterFusionStateChanged(dot_graph, label);
+
+  HloDotDumper dumper(
+      consumer.parent(),
+      StrCat("Rendering of ", kRenderRadius, " nodes around fusion consumer"),
+      consumer.GetModule()->config().debug_options(), {}, /*profile=*/nullptr,
+      MakeNodeRadiusAroundFilter(&consumer, kRenderRadius, render_boundary));
+  std::string dot_txt = dumper.Dump();
+
+  absl::optional<std::string> producer_to_highlight;
+  if (producer) {
+    producer_to_highlight = dumper.CssIdForInstruction(*producer);
+  }
+
+  fusion_progress.AddState(dot_txt, label, producer_to_highlight);
   return Status::OK();
 }
 
