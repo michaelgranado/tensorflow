@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <list>
 #include <memory>
 #include <string>
 
@@ -95,10 +96,10 @@ void TFGraphDialect::initialize() {
   allowUnknownOperations();
 
   // Caching some often used context-owned informations for fast-access.
-  name_key_ = Identifier::get(getNameAttrKey(), getContext());
-  device_key_ = Identifier::get(getDeviceAttrKey(), getContext());
+  name_key_ = StringAttr::get(getContext(), getNameAttrKey());
+  device_key_ = StringAttr::get(getContext(), getDeviceAttrKey());
   assigned_device_key_ =
-      Identifier::get(getAssignedDeviceAttrKey(), getContext());
+      StringAttr::get(getContext(), getAssignedDeviceAttrKey());
   control_ty_ = ControlType::get(getContext());
 }
 
@@ -514,7 +515,7 @@ static ParseResult ParseGraphFunc(OpAsmParser &parser, OperationState &result) {
   // for the control dependency.
   if (parser.parseLParen()) return failure();
   Type control_ty = ControlType::get(builder.getContext());
-  SmallVector<std::string> control_operand_names;
+  std::list<std::string> control_operand_names;
 
   // Helper to parse a single argument and its attributes.
   auto parse_argument = [&]() -> ParseResult {

@@ -1127,9 +1127,9 @@ distribute_py_test(
     shard_count = 10,
     tags = [
         "multi_and_single_gpu",
-        "no_cuda_asan",  # times out
-        "no_gpu",  # TODO(b/213596871): times out
-        "notsan",  # b/177098062
+        "no_cuda_asan",  # TODO(b/214574707): times out
+        "nogpu",  # TODO(b/214574707): times out
+        "notsan",  # TODO(b/177098062): flaky for over a year
     ],
     deps = [
         ":collective_all_reduce_strategy",
