@@ -25,8 +25,14 @@ limitations under the License.
 #include "rlbox_noop_sandbox.hpp"
 
 using namespace rlbox;
+using sandbox_type_t = rlbox::rlbox_noop_sandbox;
+
+template<typename T>
+using tainted_img = rlbox::tainted<T, sandbox_type_t>;
 
 #include "tensorflow/core/lib/jpeg/jpeg_mem.h"
+#include "lib_struct_file.h"
+rlbox_load_structs_from_library(jpeglib);
 
 #include <setjmp.h>
 #include <string.h>
@@ -561,11 +567,13 @@ uint8* Uncompress(const void* srcdata, int datasize,
 // ----------------------------------------------------------------------------
 // Computes image information from jpeg header.
 // Returns true on success; false on failure.
-bool GetImageInfo(const void* srcdata, int datasize, int* width, int* height,
-                  int* components) {
+bool GetImageInfo(const void* srcdata, tainted_img<int> datasize, tainted_img<int*> width, tainted_img<int*> height,
+                  tainted_img<int*> components) {
   // Create a new sandbox
   rlbox::rlbox_sandbox<rlbox_noop_sandbox> sandbox;
   sandbox.create_sandbox();
+
+  auto checked_srcdata = srcdata.unverified_safe_pointer_because("temporary");
 
   // Init in case of failure
   if (width) *width = 0;
@@ -577,27 +585,36 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int* height,
 
   // Initialize libjpeg structures to have a memory source
   // Modify the usual jpeg error manager to catch fatal errors.
-  struct jpeg_decompress_struct cinfo;
-  struct jpeg_error_mgr jerr;
+  auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>();
+  auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>();
   jmp_buf jpeg_jmpbuf;
-  cinfo.err = jpeg_std_error(&jerr);
+  p_cinfo->err = sandbox.invoke_sandbox_function(jpeg_std_error, p_jerr);
+  
+  // callback
   cinfo.client_data = &jpeg_jmpbuf;
   jerr.error_exit = CatchError;
   if (setjmp(jpeg_jmpbuf)) {
+    sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
     return false;
   }
 
   // set up, read header, set image parameters, save size
-  jpeg_create_decompress(&cinfo);
+  sandbox.invoke_sandbox_function(jpeg_create_decompress, p_cinfo);
+  
+  // callback
   SetSrc(&cinfo, srcdata, datasize, false);
 
-  jpeg_read_header(&cinfo, TRUE);
-  jpeg_calc_output_dimensions(&cinfo);
-  if (width) *width = cinfo.output_width;
-  if (height) *height = cinfo.output_height;
-  if (components) *components = cinfo.output_components;
+  sandbox.invoke_sandbox_function(jpeg_read_header, p_cinfo, TRUE);
+  sandbox.invoke_sandbox_function(jpeg_calc_output_dimensions, p_cinfo);
+  if (width) *width = p_cinfo->output_width.unverified_safe_pointer_because();
+  if (height) *height = p_cinfo->output_height.unverified_safe_pointer_because();
+  if (components) *components = p_cinfo->output_components.unverified_safe_pointer_because();
 
-  jpeg_destroy_decompress(&cinfo);
+  sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
+  
+  sandbox.free_in_sandbox(p_cinfo);
+  sandbox.free_in_sandbox(p_jerr);
+  sandbox.destroy_sandbox();
 
   return true;
 }
