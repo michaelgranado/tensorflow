@@ -574,14 +574,18 @@ bool GetImageInfo(const void* srcdata, tainted_img<int> datasize, tainted_img<in
   sandbox.create_sandbox();
 
   auto checked_srcdata = srcdata.unverified_safe_pointer_because("temporary");
+  auto checked_width = width.unverified_safe_pointer_because();
+  auto checked_height = width.unverified_safe_pointer_because();
+  auto checked_components = width.unverified_safe_pointer_because();
+  auto checked_datasize = width.unverified_safe_pointer_because();
 
   // Init in case of failure
-  if (width) *width = 0;
-  if (height) *height = 0;
-  if (components) *components = 0;
+  if (checked_width) *checked_width = 0;
+  if (checked_height) *checked_height = 0;
+  if (checked_components) *checked_components = 0;
 
   // If empty image, return
-  if (datasize == 0 || srcdata == nullptr) return false;
+  if (checked_datasize == 0 || srcdata == nullptr) return false;
 
   // Initialize libjpeg structures to have a memory source
   // Modify the usual jpeg error manager to catch fatal errors.
@@ -602,13 +606,13 @@ bool GetImageInfo(const void* srcdata, tainted_img<int> datasize, tainted_img<in
   sandbox.invoke_sandbox_function(jpeg_create_decompress, p_cinfo);
   
   // callback
-  SetSrc(&cinfo, srcdata, datasize, false);
+  SetSrc(&cinfo, srcdata, checked_datasize, false);
 
   sandbox.invoke_sandbox_function(jpeg_read_header, p_cinfo, TRUE);
   sandbox.invoke_sandbox_function(jpeg_calc_output_dimensions, p_cinfo);
-  if (width) *width = p_cinfo->output_width.unverified_safe_pointer_because();
-  if (height) *height = p_cinfo->output_height.unverified_safe_pointer_because();
-  if (components) *components = p_cinfo->output_components.unverified_safe_pointer_because();
+  if (checked_width) *checked_width = p_cinfo->output_width.unverified_safe_pointer_because();
+  if (checked_height) *checked_height = p_cinfo->output_height.unverified_safe_pointer_because();
+  if (checked_components) *checked_components = p_cinfo->output_components.unverified_safe_pointer_because();
 
   sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
   
