@@ -1,0 +1,8 @@
+# Hashes of file build rules.
+961354b2ec3088efb5f7453e26a399c0 CMakeFiles/croptest
+469d2378d5c927fe767394a28b0d35f1 CMakeFiles/dist
+4ef1b5cc3fa462a2d740f9363177ff1f CMakeFiles/dmg
+4d1f61d39f02cf339beead0f5d9ae138 CMakeFiles/tarball
+94a257284197d7b3e131d9b56e413274 CMakeFiles/testclean
+bbac29dad9e84a8be31f11245ec5ce38 CMakeFiles/tjtest
+76c071527bd698511797450b1fb7d00c CMakeFiles/uninstall
