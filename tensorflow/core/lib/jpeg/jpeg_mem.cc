@@ -572,7 +572,6 @@ uint8* Uncompress(const void* srcdata, int datasize,
 }
 */
 
-<<<<<<< HEAD
 // Callback function for error exit
 void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_common_ptr> cinfo) {  
      auto checked_cinfo = cinfo.UNSAFE_unverified();
@@ -584,28 +583,6 @@ void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_c
   // Return Control to the setjmp point
   longjmp(*jpeg_jmpbuf, 1);
 }
-=======
-struct my_error_mgr {
-    struct my_error_mgr pub;
-
-    jmp_buf setjmp_buffer;
-};
-
-typedef struct my_error_mgr * my_error_ptr;
-
-METHODDEF(void)
-    my_error_exit(j_common_ptr cinfo) {
-        my_error_ptr myerr = (my_error_ptr) cinfo->err;
-
-        longjmp(myerr->setjmp_buffer, 1);
-    }
-
-// callback function for error exit
-void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_common_ptr> cinfo) {
-    my_error_exit(cinfo);
-}
-
->>>>>>> 6c408fd588546676328f4abee36b39d95ddd8f0e
 // ----------------------------------------------------------------------------
 // Computes image information from jpeg header.
 // Returns true on success; false on failure.
@@ -623,7 +600,6 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
   if (components) *components = 0;
 
   // If empty image, return
-  // if (checked_datasize == 0 || srcdata == nullptr) return false;
   if (datasize == 0 || srcdata == nullptr) return false;
   
   // Allocate sandboxed memory
@@ -636,7 +612,6 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
 
 
   jmp_buf jpeg_jmpbuf;
-<<<<<<< HEAD
 
   // Set up standard JPEG error handling
   cinfo.err  = sandbox.invoke_sandbox_function(jpeg_std_error, &jerr);
@@ -647,16 +622,6 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
   jerr.error_exit = callback;
 
   //Establish the setjmp return context
-=======
-  p_cinfo->err = sandbox.invoke_sandbox_function(jpeg_std_error, p_jerr);
-  
-  // callback
-  //p_cinfo->client_data = &jpeg_jmpbuf;
-
-  auto callback = sandbox.register_callback(exit_error_callback);
-  p_jerr->error_exit = sandbox.invoke_sandbox_function(sandbox, p_cinfo, callback);
-
->>>>>>> 6c408fd588546676328f4abee36b39d95ddd8f0e
   if (setjmp(jpeg_jmpbuf)) {
     // Clean up
     sandbox.invoke_sandbox_function(jpeg_destroy_decompress, &cinfo);
