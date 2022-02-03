@@ -1,4 +1,4 @@
-* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,9 +20,11 @@ limitations under the License.
 #define RLBOX_USE_STATIC_CALLS() rlbox_noop_sandbox_lookup_symbol
 
 #include <stdio.h>
-#include "mylib.h"
 #include "rlbox.hpp"
 #include "rlbox_noop_sandbox.hpp"
+#include "jpeglib.h"
+#include <setjmp.h>
+
 
 using namespace rlbox;
 using sandbox_type_t = rlbox::rlbox_noop_sandbox;
@@ -30,22 +32,27 @@ using sandbox_type_t = rlbox::rlbox_noop_sandbox;
 template<typename T>
 using tainted_img = rlbox::tainted<T, sandbox_type_t>;
 
-#include "tensorflow/core/lib/jpeg/jpeg_mem.h"
-#include "lib_struct_file.h"
-rlbox_load_structs_from_library(jpeglib);
-
-#include <setjmp.h>
+//#include "tensorflow/core/lib/jpeg/jpeg_mem.h"
 #include <string.h>
 #include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "tensorflow/core/lib/jpeg/jpeg_handle.h"
-#include "tensorflow/core/platform/dynamic_annotations.h"
-#include "tensorflow/core/platform/logging.h"
-#include "tensorflow/core/platform/mem.h"
-#include "tensorflow/core/platform/types.h"
+//#include "tensorflow/core/lib/jpeg/jpeg_handle.h"
+//#include "jpeg_handler.h"
+//#include "tensorflow/core/platform/dynamic_annotations.h"
+//#include "../../platform/dynamic_annotations.h"
+//#include "tensorflow/core/platform/logging.h"
+//#include "../../platform/logging.h"
+//#include "tensorflow/core/platform/mem.h"
+//#include "../../platform/mem.h"
+//#include "tensorflow/core/platform/types.h"
+//#include "../../platform/types.h"
+
+#include "lib_struct_file.h"
+rlbox_load_structs_from_library(jpeglib);
+
 
 namespace tensorflow {
 namespace jpeg {
@@ -63,7 +70,7 @@ enum JPEGErrors {
 
 // Prevent bad compiler behavior in ASAN mode by wrapping most of the
 // arguments in a struct.
-class FewerArgsForCompiler {
+/*class FewerArgsForCompiler {
  public:
   FewerArgsForCompiler(int datasize, const UncompressFlags& flags,
                        int64_t* nwarn,
@@ -563,7 +570,21 @@ uint8* Uncompress(const void* srcdata, int datasize,
   if (!result) delete[] buffer;
   return result;
 }
+*/
 
+<<<<<<< HEAD
+// Callback function for error exit
+void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_common_ptr> cinfo) {  
+     auto checked_cinfo = cinfo.UNSAFE_unverified();
+
+  // Display Error Message
+  (*checked_cinfo->err->output_message)(checked_cinfo);
+  jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(checked_cinfo->client_data);
+
+  // Return Control to the setjmp point
+  longjmp(*jpeg_jmpbuf, 1);
+}
+=======
 struct my_error_mgr {
     struct my_error_mgr pub;
 
@@ -584,34 +605,49 @@ void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_c
     my_error_exit(cinfo);
 }
 
+>>>>>>> 6c408fd588546676328f4abee36b39d95ddd8f0e
 // ----------------------------------------------------------------------------
 // Computes image information from jpeg header.
 // Returns true on success; false on failure.
-bool GetImageInfo(const void* srcdata, tainted_img<int> datasize, tainted_img<int*> width, tainted_img<int*> height,
-                  tainted_img<int*> components) {
+
+bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
+                  int* components) {
+
   // Create a new sandbox
-  rlbox::rlbox_sandbox<rlbox_noop_sandbox> sandbox;
+  rlbox_sandbox<rlbox_noop_sandbox> sandbox;
   sandbox.create_sandbox();
 
-  auto checked_srcdata = srcdata.unverified_safe_pointer_because("temporary");
-  auto checked_width = width.unverified_safe_pointer_because();
-  auto checked_height = width.unverified_safe_pointer_because();
-  auto checked_components = width.unverified_safe_pointer_because();
-  auto checked_datasize = width.unverified_safe_pointer_because();
-
   // Init in case of failure
-  if (checked_width) *checked_width = 0;
-  if (checked_height) *checked_height = 0;
-  if (checked_components) *checked_components = 0;
+  if (width) *width = 0;
+  if (height) *height = 0;
+  if (components) *components = 0;
 
   // If empty image, return
-  if (checked_datasize == 0 || srcdata == nullptr) return false;
-
-  // Initialize libjpeg structures to have a memory source
-  // Modify the usual jpeg error manager to catch fatal errors.
+  // if (checked_datasize == 0 || srcdata == nullptr) return false;
+  if (datasize == 0 || srcdata == nullptr) return false;
+  
+  // Allocate sandboxed memory
   auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>();
   auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>();
+
+  // Initialize the normal libjpeg structures in sandboxed memory
+  auto& cinfo = *p_cinfo;
+  auto& jerr = *p_jerr;
+
+
   jmp_buf jpeg_jmpbuf;
+<<<<<<< HEAD
+
+  // Set up standard JPEG error handling
+  cinfo.err  = sandbox.invoke_sandbox_function(jpeg_std_error, &jerr);
+
+  // Override JPEG error exit using jmp_buf
+  cinfo.client_data.assign_raw_pointer(sandbox,&jpeg_jmpbuf);
+  auto callback = sandbox.register_callback(exit_error_callback);
+  jerr.error_exit = callback;
+
+  //Establish the setjmp return context
+=======
   p_cinfo->err = sandbox.invoke_sandbox_function(jpeg_std_error, p_jerr);
   
   // callback
@@ -620,25 +656,32 @@ bool GetImageInfo(const void* srcdata, tainted_img<int> datasize, tainted_img<in
   auto callback = sandbox.register_callback(exit_error_callback);
   p_jerr->error_exit = sandbox.invoke_sandbox_function(sandbox, p_cinfo, callback);
 
+>>>>>>> 6c408fd588546676328f4abee36b39d95ddd8f0e
   if (setjmp(jpeg_jmpbuf)) {
-    sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
+    // Clean up
+    sandbox.invoke_sandbox_function(jpeg_destroy_decompress, &cinfo);
     return false;
   }
 
-  // set up, read header, set image parameters, save size
-  sandbox.invoke_sandbox_function(jpeg_create_decompress, p_cinfo);
+  // Initialize JPEG Decompression Object
+  sandbox.invoke_sandbox_function(jpeg_CreateDecompress, &cinfo, JPEG_LIB_VERSION, (size_t) sizeof(struct jpeg_decompress_struct));
   
-  // callback
-  SetSrc(&cinfo, srcdata, checked_datasize, false);
-
-  sandbox.invoke_sandbox_function(jpeg_read_header, p_cinfo, TRUE);
-  sandbox.invoke_sandbox_function(jpeg_calc_output_dimensions, p_cinfo);
-  if (checked_width) *checked_width = p_cinfo->output_width.unverified_safe_pointer_because();
-  if (checked_height) *checked_height = p_cinfo->output_height.unverified_safe_pointer_because();
-  if (checked_components) *checked_components = p_cinfo->output_components.unverified_safe_pointer_because();
-
-  sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
+  /* TODO: I/O handling in jpeg_handle.cc
+   SetSrc(&cinfo, srcdata, checked_datasize, false);*/
   
+  // Read File Paramters
+  sandbox.invoke_sandbox_function(jpeg_read_header, &cinfo, TRUE);
+  sandbox.invoke_sandbox_function(jpeg_calc_output_dimensions, &cinfo);
+
+  // Save Data
+  if (width) *width = cinfo.output_width.UNSAFE_unverified();
+  if (height) *height = cinfo.output_height.UNSAFE_unverified();
+  if (components) *components = cinfo.output_components.UNSAFE_unverified();
+  
+  // Clean Up and Release Memory
+  sandbox.invoke_sandbox_function(jpeg_destroy_decompress, &cinfo);
+  
+  // Free Sandbox
   sandbox.free_in_sandbox(p_cinfo);
   sandbox.free_in_sandbox(p_jerr);
   sandbox.destroy_sandbox();
@@ -648,7 +691,7 @@ bool GetImageInfo(const void* srcdata, tainted_img<int> datasize, tainted_img<in
 
 // -----------------------------------------------------------------------------
 // Compression
-
+/*
 namespace {
 bool CompressInternal(const uint8* srcdata, int width, int height,
                       const CompressFlags& flags, tstring* output) {
@@ -840,6 +883,22 @@ tstring Compress(const void* srcdata, int width, int height,
   // If CompressInternal fails, temp will be empty.
   return temp;
 }
-
+*/
 }  // namespace jpeg
 }  // namespace tensorflow
+}
+int main() {
+/*char *data = "example";
+void *src = data;
+int datasize = 8;
+int width = 16;
+int height = 10;
+int components= 20;
+
+bool test =tensorflow::jpeg::GetImageInfo(src,datasize,&width,&height,&components);
+printf("%d\n ", test);*/
+
+printf("SUCCESS\n");
+return 0;
+}
+
