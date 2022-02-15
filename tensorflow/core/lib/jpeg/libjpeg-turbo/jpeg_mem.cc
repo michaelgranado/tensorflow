@@ -70,7 +70,7 @@ enum JPEGErrors {
 
 // Prevent bad compiler behavior in ASAN mode by wrapping most of the
 // arguments in a struct.
-/*class FewerArgsForCompiler {
+class FewerArgsForCompiler {
  public:
   FewerArgsForCompiler(int datasize, const UncompressFlags& flags,
                        int64_t* nwarn,
@@ -93,7 +93,7 @@ enum JPEGErrors {
   int height_;
   int stride_;
 };
-
+/*
 // Check whether the crop window is valid, assuming crop is true.
 bool IsCropWindowValid(const UncompressFlags& flags, int input_image_width,
                        int input_image_height) {

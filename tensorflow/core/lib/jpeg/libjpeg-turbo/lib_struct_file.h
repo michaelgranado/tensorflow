@@ -439,14 +439,57 @@
 	f(JOCTET *, data, FIELD_NORMAL, ##__VA_ARGS__) \
 	g()
 
-#define sandbox_fields_reflection_jpeglib_allClasses(f, ...) \
-	f(jpeg_common_struct, jpeglib, ##__VA_ARGS__) \
-	f(jpeg_compress_struct, jpeglib, ##__VA_ARGS__) \
-	f(jpeg_decompress_struct, jpeglib, ##__VA_ARGS__) \
-	f(jpeg_destination_mgr, jpeglib, ##__VA_ARGS__) \
-	f(jpeg_error_mgr, jpeglib, ##__VA_ARGS__) \
-	f(jpeg_marker_struct, jpeglib, ##__VA_ARGS__) \
-	f(jpeg_memory_mgr, jpeglib, ##__VA_ARGS__) \
-	f(jpeg_progress_mgr, jpeglib, ##__VA_ARGS__) \
-	f(jpeg_source_mgr, jpeglib, ##__VA_ARGS__)
+#define sandbox_fields_reflection_class_FewerArgsForCompiler(f,g,...) \
+	f(const int, datasize_, FIELD_NORMAL, ##__VA_ARGS__) \
+	g() \
+	f(const UncompressFlags, flags_, FIELD_NORMAL, ##__VA_ARGS__) \
+	g() \
+	f(int64_t* const, pnwarn_, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(std::function<uint8*(int, int, int)>, allocate_output_, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(int, height_read_, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(int, height_, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(int, stride_, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
 
+#define sandbox_fields_reflection_class_UncompressFlags(f,g,...) \
+	f(int, ratio, FIELD_NORMAL, ##__VA_ARGS__) \
+	g() \
+	f(int, components, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(bool, fancy_upscaling, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(bool, try_recover_truncated_jpeg, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(float, min_acceptable_fraction, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(int, stride, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(J_DCT_METHOD, dct_method, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(bool, crop, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(int, crop_x, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(int, crop_y, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(int, crop_width, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+	f(int, crop_height, FIELD_NORMAL, ##__VA_ARGS__) \
+        g() \
+
+#define sandbox_fields_reflection_jpeglib_allClasses(f, ...) \
+        f(jpeg_common_struct, jpeglib, ##__VA_ARGS__) \
+        f(jpeg_compress_struct, jpeglib, ##__VA_ARGS__) \
+        f(jpeg_decompress_struct, jpeglib, ##__VA_ARGS__) \
+        f(jpeg_destination_mgr, jpeglib, ##__VA_ARGS__) \
+        f(jpeg_error_mgr, jpeglib, ##__VA_ARGS__) \
+        f(jpeg_marker_struct, jpeglib, ##__VA_ARGS__) \
+        f(jpeg_memory_mgr, jpeglib, ##__VA_ARGS__) \
+        f(jpeg_progress_mgr, jpeglib, ##__VA_ARGS__) \
+        f(jpeg_source_mgr, jpeglib, ##__VA_ARGS__) \
+	f(FewerArgsForCompiler, jpeglib, ##__VA_ARGS__) \
+	f(UncompressFlags, jpeglib, ##__VA_ARGS__)
