@@ -28,6 +28,9 @@ limitations under the License.
 //#include "tensorflow/core/platform/logging.h"
 #include "logging.h"
 
+template<typename T>
+using tainted_img = rlbox::tainted<T, sandbox_type_t>;
+
 namespace tensorflow {
 namespace jpeg {
 
@@ -162,9 +165,16 @@ void MemSkipInputData(j_decompress_ptr cinfo, long jump) {
 }
 
 // -----------------------------------------------------------------------------
-void SetSrc(j_decompress_ptr cinfo, const void *data,
+void SetSrc(tainted_img<j_decompress_ptr> unchecked_cinfo, const void *data,
             unsigned long int datasize, bool try_recover_truncated_jpeg) {
-  MemSourceMgr *src;
+  rlbox_sandbox<rlbox_noop_sandbox> sandbox;
+  sandbox.create_sandbox();
+  
+  //MemSourceMgr *src;
+  auto p_src = sandbox.malloc_in_sandbox<MemSourceMgr *>();
+  auto& src = *p_src;
+
+  auto cinfo = unchecked_cinfo.UNSAFE_unverified();
 
   cinfo->src = reinterpret_cast<struct jpeg_source_mgr *>(
       (*cinfo->mem->alloc_small)(reinterpret_cast<j_common_ptr>(cinfo),
