@@ -605,10 +605,20 @@ uint8* Uncompress(const void* srcdata, int datasize,
   return result;
 }
 */
-/*
+struct decoder_error_mgr {
+  struct jpeg_error_mgr pub;    /* "public" fields */
+
+  jmp_buf jpeg_jmpbuf;        /* for return to caller */
+};
+
+typedef struct decoder_error_mgr * my_error_ptr;
+
 // Callback function for error exit
+// 
+/*
 void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_common_ptr> cinfo) {
 
+    
   // auto checked_cinfo = cinfo.copy_and_verify([](jpeg_decompress_struct* cinfo) {return cinfo;}); 
   auto checked_cinfo = cinfo.UNSAFE_unverified();
 
@@ -616,8 +626,10 @@ void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_c
   (*checked_cinfo->err->output_message)(checked_cinfo);
   jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(checked_cinfo->client_data);
 
+
+
   // Return Control to the setjmp point
-  longjmp(*jpeg_jmpbuf, 1);
+   longjmp(*jpeg_jmpbuf, 1);
 }*/
 // ----------------------------------------------------------------------------
 // Computes image information from jpeg header.
@@ -641,6 +653,7 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
   // Allocate sandboxed memory
   auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>();
   auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>();
+  auto test = sandbox.malloc_in_sandbox<decoder_error_mgr>();
 
 
   // Initialize the normal libjpeg structures in sandboxed memory
