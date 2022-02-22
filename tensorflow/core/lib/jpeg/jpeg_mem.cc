@@ -587,6 +587,14 @@ void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_c
 // Computes image information from jpeg header.
 // Returns true on success; false on failure.
 
+struct decoder_error_mgr {
+  struct jpeg_error_mgr pub;    /* "public" fields */
+
+  jmp_buf setjmp_buffer;        /* for return to caller */
+};
+
+typedef struct decoder_error_mgr * my_error_ptr;
+
 bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
                   int* components) {
 
@@ -604,25 +612,25 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
   
   // Allocate sandboxed memory
   auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>();
-  auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>();
+  auto p_jerr = sandbox.malloc_in_sandbox<decoder_error_mgr>();
 
   // Initialize the normal libjpeg structures in sandboxed memory
   auto& cinfo = *p_cinfo;
   auto& jerr = *p_jerr;
 
-
-  jmp_buf jpeg_jmpbuf;
+  //jmp_buf jpeg_jmpbuf;
 
   // Set up standard JPEG error handling
   cinfo.err  = sandbox.invoke_sandbox_function(jpeg_std_error, &jerr);
 
   // Override JPEG error exit using jmp_buf
-  cinfo.client_data.assign_raw_pointer(sandbox,&jpeg_jmpbuf);
+  //cinfo.client_data.assign_raw_pointer(sandbox, &jpeg_jmpbuf);
+  cinfo.client_data.assign_raw_pointer(sandbox, &(decoder_error_mgr->setjmp_buffer));
   auto callback = sandbox.register_callback(exit_error_callback);
   jerr.error_exit = callback;
 
   //Establish the setjmp return context
-  if (setjmp(jpeg_jmpbuf)) {
+  if (setjmp(decoder_error_mgr->setjmp_buffer)) {
     // Clean up
     sandbox.invoke_sandbox_function(jpeg_destroy_decompress, &cinfo);
     return false;
