@@ -2,8 +2,8 @@
 
 
 
-hello: jpeg_mem.cc 
-	$(CXX) -std=c++17 $(CFLAGS)  jpeg_mem.cc libjpeg.a -o $@
+hello: jpeg_mem.cc jpeg_handle.cc 
+	$(CXX) -std=c++17 $(CFLAGS)  jpeg_mem.cc jpeg_handle.cc libjpeg.a -o $@
 
 clean:
 	-rm hello

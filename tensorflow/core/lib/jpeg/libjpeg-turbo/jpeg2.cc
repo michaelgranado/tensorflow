@@ -24,7 +24,6 @@ limitations under the License.
 #include "rlbox_noop_sandbox.hpp"
 #include "jpeglib.h"
 #include <setjmp.h>
-#include "jpeg_handle.h"
 
 
 using namespace rlbox;
@@ -41,7 +40,7 @@ using tainted_img = rlbox::tainted<T, sandbox_type_t>;
 #include <utility>
 
 //#include "tensorflow/core/lib/jpeg/jpeg_handle.h"
-//#include "jpeg_handle.h"
+//#include "jpeg_handler.h"
 //#include "tensorflow/core/platform/dynamic_annotations.h"
 //#include "../../platform/dynamic_annotations.h"
 //#include "tensorflow/core/platform/logging.h"
@@ -71,7 +70,6 @@ enum JPEGErrors {
 
 // Prevent bad compiler behavior in ASAN mode by wrapping most of the
 // arguments in a struct.
-
 /*class FewerArgsForCompiler {
  public:
   FewerArgsForCompiler(int datasize, const UncompressFlags& flags,
@@ -95,6 +93,7 @@ enum JPEGErrors {
   int height_;
   int stride_;
 };
+
 // Check whether the crop window is valid, assuming crop is true.
 bool IsCropWindowValid(const UncompressFlags& flags, int input_image_width,
                        int input_image_height) {
@@ -111,51 +110,15 @@ bool IsCropWindowValid(const UncompressFlags& flags, int input_image_width,
 // See also http://llvm.org/docs/LibFuzzer.html#fuzzer-friendly-build-mode
 void no_print(j_common_ptr cinfo) {}
 #endif
-*/
 
-jmp_buf jpeg_jmpbuf;
-
-struct decoder_error_mgr {
-  struct jpeg_error_mgr pub;    /* "public" fields */
-
-  jmp_buf jpeg_jmpbuf;        /* for return to caller */
-};
-
-typedef struct decoder_error_mgr *my_error_ptr;
-
-// Callback function for error exit
-void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_common_ptr> cinfo) {
-
-  // auto checked_cinfo = cinfo.copy_and_verify([](jpeg_decompress_struct* cinfo) {return cinfo;}); 
- /* auto checked_cinfo = cinfo.UNSAFE_unverified();
-
-  // Display Error Message
-  (*checked_cinfo->err->output_message)(checked_cinfo);
-  jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(checked_cinfo->client_data);*/
-
-  // Return Control to the setjmp point
- // longjmp(*jpeg_jmpbuf, 1);
-
-
-
-
-  longjmp(jpeg_jmpbuf, 1);
-}
-
-/*
-//uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
-uint* UncompressLow(const void* srcdata) {
-
-  rlbox_sandbox<rlbox_noop_sandbox> sandbox;
-  sandbox.create_sandbox();
-
+uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   // unpack the argball
-  const int datasize = 10;
- // const auto& flags = argball->flags_;
-  const int ratio = 6;
-  int components = 3;
-  int stride = 0;              // may be 0
-  int64_t* const nwarn = NULL;  // may be NULL
+  const int datasize = argball->datasize_;
+  const auto& flags = argball->flags_;
+  const int ratio = flags.ratio;
+  int components = flags.components;
+  int stride = flags.stride;              // may be 0
+  int64_t* const nwarn = argball->pnwarn_;  // may be NULL
 
   // Can't decode if the ratio is not recognized by libjpeg
   if ((ratio != 1) && (ratio != 2) && (ratio != 4) && (ratio != 8)) {
@@ -171,46 +134,30 @@ uint* UncompressLow(const void* srcdata) {
   if (datasize == 0 || srcdata == nullptr) return nullptr;
 
   // Declare temporary buffer pointer here so that we can free on error paths
-//  JSAMPLE* tempdata = nullptr;
-  auto p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE*>();
+  JSAMPLE* tempdata = nullptr;
 
   // Initialize libjpeg structures to have a memory source
   // Modify the usual jpeg error manager to catch fatal errors.
   JPEGErrors error = JPEGERRORS_OK;
-  auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>();
-  auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>();
-  // Initialize the normal libjpeg structures in sandboxed memory
-  auto& cinfo = *p_cinfo;
-  auto& jerr = *p_jerr;
-  cinfo.err  = sandbox.invoke_sandbox_function(jpeg_std_error, &jerr);
-  jmp_buf jpeg_jmpbuf; 
-
-  // Override JPEG error exit using jmp_buf
-  cinfo.client_data.assign_raw_pointer(sandbox, &jpeg_jmpbuf);
-  auto callback = sandbox.register_callback(exit_error_callback);
-  jerr.error_exit = callback;
+  struct jpeg_decompress_struct cinfo;
+  struct jpeg_error_mgr jerr;
+  cinfo.err = jpeg_std_error(&jerr);
+  jerr.error_exit = CatchError;
 
 #ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
   jerr.output_message = no_print;
 #endif
 
+  jmp_buf jpeg_jmpbuf;
+  cinfo.client_data = &jpeg_jmpbuf;
   if (setjmp(jpeg_jmpbuf)) {
-      sandbox.free_in_sandbox(p_tempdata);
-   // delete[] tempdata;
+    delete[] tempdata;
     return nullptr;
   }
-  
-  // Initialize JPEG Decompression Object
-  sandbox.invoke_sandbox_function(jpeg_CreateDecompress, &cinfo, JPEG_LIB_VERSION, (size_t) sizeof(struct jpeg_decompress_struct));
 
- // SetSrc(&cinfo, srcdata, datasize, flags.try_recover_truncated_jpeg); I/O *******
- 
-  
-  // Read File Paramters
-  sandbox.invoke_sandbox_function(jpeg_read_header, &cinfo, TRUE);
-  
-  return nullptr;
-}
+  jpeg_create_decompress(&cinfo);
+  SetSrc(&cinfo, srcdata, datasize, flags.try_recover_truncated_jpeg);
+  jpeg_read_header(&cinfo, TRUE);
 
   // Set components automatically if desired, autoconverting cmyk to rgb.
   if (components == 0) components = std::min(cinfo.num_components, 3);
@@ -626,34 +573,35 @@ uint8* Uncompress(const void* srcdata, int datasize,
 */
 
 // Callback function for error exit
-// 
-/*
-void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_common_ptr> cinfo) {
-
-    
-  // auto checked_cinfo = cinfo.copy_and_verify([](jpeg_decompress_struct* cinfo) {return cinfo;}); 
-  auto checked_cinfo = cinfo.UNSAFE_unverified();
+void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_common_ptr> cinfo) {  
+     auto checked_cinfo = cinfo.UNSAFE_unverified();
 
   // Display Error Message
   (*checked_cinfo->err->output_message)(checked_cinfo);
   jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(checked_cinfo->client_data);
 
-
-
   // Return Control to the setjmp point
-   longjmp(*jpeg_jmpbuf, 1);
-}*/
+  longjmp(*jpeg_jmpbuf, 1);
+}
 // ----------------------------------------------------------------------------
 // Computes image information from jpeg header.
 // Returns true on success; false on failure.
 
+struct decoder_error_mgr {
+  struct jpeg_error_mgr pub;    /* "public" fields */
+
+  jmp_buf setjmp_buffer;        /* for return to caller */
+};
+
+typedef struct decoder_error_mgr * my_error_ptr;
+
 bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
                   int* components) {
 
-//char* params = reinterpret_cast<char*> srcdata;
   // Create a new sandbox
   rlbox_sandbox<rlbox_noop_sandbox> sandbox;
   sandbox.create_sandbox();
+
   // Init in case of failure
   if (width) *width = 0;
   if (height) *height = 0;
@@ -661,44 +609,39 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
 
   // If empty image, return
   if (datasize == 0 || srcdata == nullptr) return false;
- auto unchecked_params = sandbox.malloc_in_sandbox<unsigned char>(datasize);
- memcpy(sandbox, unchecked_params, srcdata, datasize);
+  
   // Allocate sandboxed memory
   auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>();
-   auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>();
- 
-//  auto p_jerr = sandbox.malloc_in_sandbox<decoder_error_mgr>();
+  auto p_jerr = sandbox.malloc_in_sandbox<decoder_error_mgr>();
 
   // Initialize the normal libjpeg structures in sandboxed memory
   auto& cinfo = *p_cinfo;
-   auto& jerr = *p_jerr;
+  auto& jerr = *p_jerr;
 
- // jmp_buf jpeg_jmpbuf;
- 
- // Set up standard JPEG error handling
-   cinfo.err  = sandbox.invoke_sandbox_function(jpeg_std_error, &jerr);
+  //jmp_buf jpeg_jmpbuf;
+
+  // Set up standard JPEG error handling
+  cinfo.err  = sandbox.invoke_sandbox_function(jpeg_std_error, &jerr);
 
   // Override JPEG error exit using jmp_buf
-  cinfo.client_data.assign_raw_pointer(sandbox, &jpeg_jmpbuf);
+  //cinfo.client_data.assign_raw_pointer(sandbox, &jpeg_jmpbuf);
+  cinfo.client_data.assign_raw_pointer(sandbox, &(decoder_error_mgr->setjmp_buffer));
   auto callback = sandbox.register_callback(exit_error_callback);
   jerr.error_exit = callback;
 
   //Establish the setjmp return context
-  if (setjmp(jpeg_jmpbuf)) {
+  if (setjmp(decoder_error_mgr->setjmp_buffer)) {
     // Clean up
     sandbox.invoke_sandbox_function(jpeg_destroy_decompress, &cinfo);
-  sandbox.free_in_sandbox(p_cinfo);
-  sandbox.free_in_sandbox(p_jerr);
-  sandbox.destroy_sandbox();
     return false;
   }
 
   // Initialize JPEG Decompression Object
   sandbox.invoke_sandbox_function(jpeg_CreateDecompress, &cinfo, JPEG_LIB_VERSION, (size_t) sizeof(struct jpeg_decompress_struct));
   
-  // TODO: I/O handling in jpeg_handle.cc
-  sandbox.invoke_sandbox_function(SetSrc, &cinfo, unchecked_params, datasize, false);
- 
+  /* TODO: I/O handling in jpeg_handle.cc
+   SetSrc(&cinfo, srcdata, checked_datasize, false);*/
+  
   // Read File Paramters
   sandbox.invoke_sandbox_function(jpeg_read_header, &cinfo, TRUE);
   sandbox.invoke_sandbox_function(jpeg_calc_output_dimensions, &cinfo);
@@ -715,7 +658,6 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
   sandbox.free_in_sandbox(p_cinfo);
   sandbox.free_in_sandbox(p_jerr);
   sandbox.destroy_sandbox();
-  
 
   return true;
 }
@@ -918,20 +860,16 @@ tstring Compress(const void* srcdata, int width, int height,
 }  // namespace jpeg
 }  // namespace tensorflow
 }
-
-
-
-
 int main() {
-char *data = "example";
+/*char *data = "example";
 void *src = data;
 int datasize = 8;
 int width = 16;
 int height = 10;
 int components= 20;
 
-bool test = tensorflow::jpeg::GetImageInfo(src,datasize,&width,&height,&components);
-printf("%d\n ", test);
+bool test =tensorflow::jpeg::GetImageInfo(src,datasize,&width,&height,&components);
+printf("%d\n ", test);*/
 
 printf("SUCCESS\n");
 return 0;

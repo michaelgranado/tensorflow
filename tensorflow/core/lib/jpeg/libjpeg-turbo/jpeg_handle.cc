@@ -18,15 +18,24 @@ limitations under the License.
 // These functions are not meant to be used directly, see jpeg_mem.h instead.
 // We are filling out stubs required by jpeglib, those stubs are private to
 // the implementation, we are just making available JPGMemSrc, JPGMemDest
+#define RLBOX_SINGLE_THREADED_INVOCATIONS
+#define RLBOX_USE_STATIC_CALLS() rlbox_noop_sandbox_lookup_symbol
 
 //#include "tensorflow/core/lib/jpeg/jpeg_handle.h"
+#include "rlbox.hpp"
+#include "rlbox_noop_sandbox.hpp"
+#include "jpeglib.h"
 #include "jpeg_handle.h"
+#include "lib_struct_file.h"
+#include "jerror.h"
 
 #include <setjmp.h>
 #include <stddef.h>
 
 //#include "tensorflow/core/platform/logging.h"
-#include "logging.h"
+//#include "logging.h"
+using namespace rlbox;
+using sandbox_type_t = rlbox::rlbox_noop_sandbox;
 
 template<typename T>
 using tainted_img = rlbox::tainted<T, sandbox_type_t>;
@@ -47,7 +56,7 @@ void CatchError(j_common_ptr cinfo) {
 // Destination functions
 
 // -----------------------------------------------------------------------------
-void MemInitDestination(j_compress_ptr cinfo) {
+/*void MemInitDestination(j_compress_ptr cinfo) {
   MemDestMgr *dest = reinterpret_cast<MemDestMgr *>(cinfo->dest);
   VLOG(1) << "Initializing buffer=" << dest->bufsize << " bytes";
   dest->pub.next_output_byte = dest->buffer;
@@ -81,9 +90,9 @@ void MemTermDestination(j_compress_ptr cinfo) {
   }
   dest->datacount = dest->bufsize - dest->pub.free_in_buffer;
 }
-
+*/
 // -----------------------------------------------------------------------------
-void SetDest(j_compress_ptr cinfo, void *buffer, int bufsize) {
+/*void SetDest(j_compress_ptr cinfo, void *buffer, int bufsize) {
   SetDest(cinfo, buffer, bufsize, nullptr);
 }
 
@@ -105,13 +114,14 @@ void SetDest(j_compress_ptr cinfo, void *buffer, int bufsize,
   dest->pub.empty_output_buffer = MemEmptyOutputBuffer;
   dest->pub.term_destination = MemTermDestination;
 }
-
+*/
 // *****************************************************************************
 // *****************************************************************************
 // *****************************************************************************
 // Source functions
 
 // -----------------------------------------------------------------------------
+
 void MemInitSource(j_decompress_ptr cinfo) {
   MemSourceMgr *src = reinterpret_cast<MemSourceMgr *>(cinfo->src);
   src->pub.next_input_byte = src->data;
@@ -165,18 +175,12 @@ void MemSkipInputData(j_decompress_ptr cinfo, long jump) {
 }
 
 // -----------------------------------------------------------------------------
-void SetSrc(tainted_img<j_decompress_ptr> unchecked_cinfo, const void *data,
+void SetSrc(j_decompress_ptr cinfo, const unsigned char* data,
             unsigned long int datasize, bool try_recover_truncated_jpeg) {
-  rlbox_sandbox<rlbox_noop_sandbox> sandbox;
-  sandbox.create_sandbox();
   
-  //MemSourceMgr *src;
-  auto p_src = sandbox.malloc_in_sandbox<MemSourceMgr *>();
-  auto& src = *p_src;
-
-  auto cinfo = unchecked_cinfo.UNSAFE_unverified();
-
-  cinfo->src = reinterpret_cast<struct jpeg_source_mgr *>(
+   MemSourceMgr *src;
+   
+   cinfo->src = reinterpret_cast<struct jpeg_source_mgr *>(
       (*cinfo->mem->alloc_small)(reinterpret_cast<j_common_ptr>(cinfo),
                                  JPOOL_PERMANENT, sizeof(MemSourceMgr)));
 
@@ -186,11 +190,12 @@ void SetSrc(tainted_img<j_decompress_ptr> unchecked_cinfo, const void *data,
   src->pub.skip_input_data = MemSkipInputData;
   src->pub.resync_to_restart = jpeg_resync_to_restart;
   src->pub.term_source = MemTermSource;
-  src->data = reinterpret_cast<const unsigned char *>(data);
+  src->data = data;
   src->datasize = datasize;
   src->pub.bytes_in_buffer = 0;
   src->pub.next_input_byte = nullptr;
   src->try_recover_truncated_jpeg = try_recover_truncated_jpeg;
+  
 }
 
 }  // namespace jpeg
