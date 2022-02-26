@@ -143,15 +143,14 @@ void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_c
 }
 
 /*
-//uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
-uint* UncompressLow(const void* srcdata) {
+uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
 
   rlbox_sandbox<rlbox_noop_sandbox> sandbox;
   sandbox.create_sandbox();
 
   // unpack the argball
   const int datasize = 10;
- // const auto& flags = argball->flags_;
+  const auto& flags = argball->flags_;
   const int ratio = 6;
   int components = 3;
   int stride = 0;              // may be 0
@@ -170,9 +169,12 @@ uint* UncompressLow(const void* srcdata) {
   // if empty image, return
   if (datasize == 0 || srcdata == nullptr) return nullptr;
 
+  auto unchecked_srcdata = sandbox.malloc_in_sandbox<unsigned char>(argball->datasize);
+  memcpy(sandbox, unchecked_srcdata, srcdata, argball->datasize);
+
   // Declare temporary buffer pointer here so that we can free on error paths
 //  JSAMPLE* tempdata = nullptr;
-  auto p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE*>();
+  auto p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE>();
 
   // Initialize libjpeg structures to have a memory source
   // Modify the usual jpeg error manager to catch fatal errors.
@@ -203,8 +205,8 @@ uint* UncompressLow(const void* srcdata) {
   // Initialize JPEG Decompression Object
   sandbox.invoke_sandbox_function(jpeg_CreateDecompress, &cinfo, JPEG_LIB_VERSION, (size_t) sizeof(struct jpeg_decompress_struct));
 
- // SetSrc(&cinfo, srcdata, datasize, flags.try_recover_truncated_jpeg); I/O *******
- 
+ // I/O
+ sandbox.invoke_sandbox_function(SetSrc, &cinfo, unchecked_srcdata, datasize, flags.try_recover_truncated_jpeg);
   
   // Read File Paramters
   sandbox.invoke_sandbox_function(jpeg_read_header, &cinfo, TRUE);
@@ -232,7 +234,7 @@ uint* UncompressLow(const void* srcdata) {
       break;
     default:
       LOG(ERROR) << " Invalid components value " << components << std::endl;
-      jpeg_destroy_decompress(&cinfo);
+      sandbox.invoke_sandbox_function(jpeg_destroy_decompress, &cinfo);
       return nullptr;
   }
   cinfo.do_fancy_upsampling = boolean(flags.fancy_upscaling);
@@ -242,7 +244,7 @@ uint* UncompressLow(const void* srcdata) {
 
   // Determine the output image size before attempting decompress to prevent
   // OOM'ing during the decompress
-  jpeg_calc_output_dimensions(&cinfo);
+  sandbox.invoke_sandbox_function(jpeg_calc_output_dimensions, &cinfo);
 
   int64_t total_size = static_cast<int64_t>(cinfo.output_height) *
                        static_cast<int64_t>(cinfo.output_width) *
@@ -252,16 +254,16 @@ uint* UncompressLow(const void* srcdata) {
   if (cinfo.output_width <= 0 || cinfo.output_height <= 0) {
     LOG(ERROR) << "Invalid image size: " << cinfo.output_width << " x "
                << cinfo.output_height;
-    jpeg_destroy_decompress(&cinfo);
+    sandbox.invoke_sandbox_function(jpeg_destroy_decompress, &cinfo);
     return nullptr;
   }
   if (total_size >= (1LL << 29)) {
     LOG(ERROR) << "Image too large: " << total_size;
-    jpeg_destroy_decompress(&cinfo);
+    sandbox.invoke_sandbox_function(jpeg_destroy_decompress, &cinfo);
     return nullptr;
   }
 
-  jpeg_start_decompress(&cinfo);
+  sandbox.invoke_sandbox_function(jpeg_start_decompress, &cinfo);
 
   JDIMENSION target_output_width = cinfo.output_width;
   JDIMENSION target_output_height = cinfo.output_height;
@@ -279,7 +281,7 @@ uint* UncompressLow(const void* srcdata) {
                  << ", h=" << target_output_height
                  << " for image_width: " << cinfo.output_width
                  << " and image_height: " << cinfo.output_height;
-      jpeg_destroy_decompress(&cinfo);
+      sandbox.invoke_sandbox_function(jpeg_destroy_decompress, &cinfo);
       return nullptr;
     }
 
@@ -290,10 +292,10 @@ uint* UncompressLow(const void* srcdata) {
     // given flags.crop_width. Please see libjpeg library for details.
     JDIMENSION crop_width = flags.crop_width;
     JDIMENSION crop_x = flags.crop_x;
-    jpeg_crop_scanline(&cinfo, &crop_x, &crop_width);
+    sandbox.invoke_sandbox_function(jpeg_crop_scanline, &cinfo, &crop_x, &crop_width);
 
     // Update cinfo.output_scanline.
-    skipped_scanlines = jpeg_skip_scanlines(&cinfo, flags.crop_y);
+    skipped_scanlines = sandbox.invoke_sandbox_function(jpeg_skip_scanlines, &cinfo, flags.crop_y);
     CHECK_EQ(skipped_scanlines, flags.crop_y);
   }
 #endif
@@ -304,7 +306,7 @@ uint* UncompressLow(const void* srcdata) {
     stride = min_stride;
   } else if (stride < min_stride) {
     LOG(ERROR) << "Incompatible stride: " << stride << " < " << min_stride;
-    jpeg_destroy_decompress(&cinfo);
+    sandbox.invoke_sandbox_function(jpeg_destroy_decompress, &cinfo);
     return nullptr;
   }
 
@@ -312,6 +314,7 @@ uint* UncompressLow(const void* srcdata) {
   argball->height_ = target_output_height;
   argball->stride_ = stride;
 
+//TODO
 #if !defined(LIBJPEG_TURBO_VERSION)
   uint8* dstdata = nullptr;
   if (flags.crop) {
@@ -325,11 +328,12 @@ uint* UncompressLow(const void* srcdata) {
                                              target_output_height, components);
 #endif
   if (dstdata == nullptr) {
-    jpeg_destroy_decompress(&cinfo);
+    sandbox.invoke_sandbox_function(jpeg_destroy_decompress, &cinfo);
     return nullptr;
   }
   JSAMPLE* output_line = static_cast<JSAMPLE*>(dstdata);
-
+  
+  // TODO
   // jpeg_read_scanlines requires the buffers to be allocated based on
   // cinfo.output_width, but the target image width might be different if crop
   // is enabled and crop_width is not MCU aligned. In this case, we need to
