@@ -503,4 +503,4 @@
         f(jpeg_source_mgr, jpeglib, ##__VA_ARGS__) 
 //	f(FewerArgsForCompiler, jpeglib, ##__VA_ARGS__) \
 //	f(UncompressFlags, jpeglib, ##__VA_ARGS__)
-      //  f(decoder_error_mgr, jpeglib, ##__VA_ARGS__) \
+      //  f(decoder_error_mgr, jpeglib, ##__VA_ARGS__) 
