@@ -25,6 +25,7 @@ limitations under the License.
 #include "jpeglib.h"
 #include <setjmp.h>
 #include "jpeg_handle.h"
+#include "jpeg_mem.h"
 
 
 using namespace rlbox;
@@ -72,11 +73,11 @@ enum JPEGErrors {
 // Prevent bad compiler behavior in ASAN mode by wrapping most of the
 // arguments in a struct.
 
-/*class FewerArgsForCompiler {
+ class FewerArgsForCompiler {
  public:
   FewerArgsForCompiler(int datasize, const UncompressFlags& flags,
                        int64_t* nwarn,
-                       std::function<uint8*(int, int, int)> allocate_output)
+                       std::function<uint8_t*(int, int, int)> allocate_output)
       : datasize_(datasize),
         flags_(flags),
         pnwarn_(nwarn),
@@ -90,7 +91,7 @@ enum JPEGErrors {
   const int datasize_;
   const UncompressFlags flags_;
   int64_t* const pnwarn_;
-  std::function<uint8*(int, int, int)> allocate_output_;
+  std::function<uint8_t*(int, int, int)> allocate_output_;
   int height_read_;  // number of scanline lines successfully read
   int height_;
   int stride_;
@@ -111,9 +112,8 @@ bool IsCropWindowValid(const UncompressFlags& flags, int input_image_width,
 // See also http://llvm.org/docs/LibFuzzer.html#fuzzer-friendly-build-mode
 void no_print(j_common_ptr cinfo) {}
 #endif
-*/
 
-jmp_buf jpeg_jmpbuf;
+
 
 struct decoder_error_mgr {
   struct jpeg_error_mgr pub;    /* "public" fields */
@@ -127,35 +127,34 @@ typedef struct decoder_error_mgr *my_error_ptr;
 void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_common_ptr> cinfo) {
 
   // auto checked_cinfo = cinfo.copy_and_verify([](jpeg_decompress_struct* cinfo) {return cinfo;}); 
- /* auto checked_cinfo = cinfo.UNSAFE_unverified();
+   auto checked_cinfo = cinfo.UNSAFE_unverified();
 
   // Display Error Message
   (*checked_cinfo->err->output_message)(checked_cinfo);
-  jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(checked_cinfo->client_data);*/
+  jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(checked_cinfo->client_data);
 
   // Return Control to the setjmp point
- // longjmp(*jpeg_jmpbuf, 1);
+   longjmp(*jpeg_jmpbuf, 1);
 
 
 
 
-  longjmp(jpeg_jmpbuf, 1);
+ // longjmp(jpeg_jmpbuf, 1);
 }
 
-/*
-//uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
-uint* UncompressLow(const void* srcdata) {
+
+uint8_t* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
 
   rlbox_sandbox<rlbox_noop_sandbox> sandbox;
   sandbox.create_sandbox();
 
   // unpack the argball
-  const int datasize = 10;
- // const auto& flags = argball->flags_;
-  const int ratio = 6;
-  int components = 3;
-  int stride = 0;              // may be 0
-  int64_t* const nwarn = NULL;  // may be NULL
+  const int datasize = argball->datasize_;
+  const auto& flags = argball->flags_;
+  const int ratio = flags.ratio;
+  int components = flags.components;
+  int stride = flags.stride;              // may be 0
+  int64_t* const nwarn = argball->pnwarn_;  // may be NULL
 
   // Can't decode if the ratio is not recognized by libjpeg
   if ((ratio != 1) && (ratio != 2) && (ratio != 4) && (ratio != 8)) {
@@ -169,7 +168,7 @@ uint* UncompressLow(const void* srcdata) {
 
   // if empty image, return
   if (datasize == 0 || srcdata == nullptr) return nullptr;
-
+/*
   // Declare temporary buffer pointer here so that we can free on error paths
 //  JSAMPLE* tempdata = nullptr;
   auto p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE*>();
@@ -566,10 +565,12 @@ uint* UncompressLow(const void* srcdata) {
 
   jpeg_destroy_decompress(&cinfo);
   return dstdata;
+  */
+  return NULL;
 }
 
-}  // anonymous namespace
-
+//}  // anonymous namespace
+/*
 // -----------------------------------------------------------------------------
 //  We do the apparently silly thing of packing 5 of the arguments
 //  into a structure that is then passed to another routine
@@ -650,7 +651,6 @@ void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_c
 bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
                   int* components) {
 
-//char* params = reinterpret_cast<char*> srcdata;
   // Create a new sandbox
   rlbox_sandbox<rlbox_noop_sandbox> sandbox;
   sandbox.create_sandbox();
@@ -664,16 +664,16 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
  auto unchecked_params = sandbox.malloc_in_sandbox<unsigned char>(datasize);
  memcpy(sandbox, unchecked_params, srcdata, datasize);
   // Allocate sandboxed memory
-  auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>();
-   auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>();
+   auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>();
+  auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>();
  
-//  auto p_jerr = sandbox.malloc_in_sandbox<decoder_error_mgr>();
+ //  auto p_jerr = sandbox.malloc_in_sandbox<decoder_error_mgr>();
 
   // Initialize the normal libjpeg structures in sandboxed memory
-  auto& cinfo = *p_cinfo;
+   auto& cinfo = *p_cinfo;
    auto& jerr = *p_jerr;
 
- // jmp_buf jpeg_jmpbuf;
+   jmp_buf jpeg_jmpbuf;
  
  // Set up standard JPEG error handling
    cinfo.err  = sandbox.invoke_sandbox_function(jpeg_std_error, &jerr);
@@ -715,7 +715,7 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
   sandbox.free_in_sandbox(p_cinfo);
   sandbox.free_in_sandbox(p_jerr);
   sandbox.destroy_sandbox();
-  
+
 
   return true;
 }
