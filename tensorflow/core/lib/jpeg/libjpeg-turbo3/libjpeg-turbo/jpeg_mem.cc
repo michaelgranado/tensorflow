@@ -40,7 +40,7 @@ using tainted_img = rlbox::tainted<T, sandbox_type_t>;
 #include <string>
 #include <utility>
 
-//#include "tensorflow/core/lib/jpeg/jpeg_handle.h"
+//#include "tensorflow/core/lib/jpeg/libjpeg-turbo3/libjpeg-turbo/jpeg_handle.h"
 //#include "jpeg_handle.h"
 //#include "tensorflow/core/platform/dynamic_annotations.h"
 //#include "../../platform/dynamic_annotations.h"
@@ -111,7 +111,6 @@ bool IsCropWindowValid(const UncompressFlags& flags, int input_image_width,
 // See also http://llvm.org/docs/LibFuzzer.html#fuzzer-friendly-build-mode
 void no_print(j_common_ptr cinfo) {}
 #endif
-
 
 jmp_buf jpeg_jmpbuf;
 
@@ -296,15 +295,18 @@ uint8_t* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     // be moved left to the nearest MCU boundary, and width will be increased
     // accordingly. Therefore, the final cinfo.crop_width might differ from the
     // given flags.crop_width. Please see libjpeg library for details.
-    auto crop_width = sandbox.malloc_in_sandbox<JDIMENSION>();
-    //memcpy(sandbox, crop_width, flags.crop_width, 1);
-    auto crop_x = sandbox.malloc_in_sandbox<JDIMENSION>();
-    //memcpy(sandbox, crop_x, flags.crop_x, 1);
-    //sandbox.invoke_sandbox_function(jpeg_crop_scanline, &cinfo, &crop_x, &crop_width);
 
-    /*// Update cinfo.output_scanline.
-    skipped_scanlines = sandbox.invoke_sandbox_function(jpeg_skip_scanlines, &cinfo, flags.crop_y);
-    CHECK_EQ(skipped_scanlines, flags.crop_y);*/
+    auto p_crop_width = sandbox.malloc_in_sandbox<JDIMENSION>();
+    auto& crop_width = flags.crop_width;
+    auto p_crop_x = sandbox.malloc_in_sandbox<JDIMENSION>();
+    auto& crop_x = flags.crop_x;
+    sandbox.invoke_sandbox_function(jpeg_crop_scanline, &cinfo, p_crop_x, p_crop_width);
+
+    // Update cinfo.output_scanline.
+    auto tainted_output = sandbox.invoke_sandbox_function(jpeg_skip_scanlines, &cinfo, flags.crop_y);
+    skipped_scanlines = tainted_output.unverified_safe_because("int");
+    //TODO: LOG compilation error
+    //CHECK_EQ(skipped_scanlines, flags.crop_y);
   }
 #endif
 /*
