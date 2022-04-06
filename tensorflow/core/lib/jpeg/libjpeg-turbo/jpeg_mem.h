@@ -23,8 +23,9 @@ limitations under the License.
 
 #include <functional>
 #include <string>
+//#include "stringpiece.h"
 
-//#include "tensorflow/core/lib/core/stringpiece.h"
+//include "tensorflow/core/lib/core/stringpiece.h"
 //#include "stringpiece.h"
 //#include "tensorflow/core/platform/jpeg.h"
 //#include "tensorflow/core/platform/types.h"
