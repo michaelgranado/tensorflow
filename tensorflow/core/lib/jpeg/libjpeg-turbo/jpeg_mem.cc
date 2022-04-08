@@ -986,7 +986,7 @@ tstring Compress(const void* srcdata, int width, int height,
 
 
 int main() {
-char *data = "example";
+char data[] = "example";
 void *src = data;
 int datasize = 8;
 int width = 16;
