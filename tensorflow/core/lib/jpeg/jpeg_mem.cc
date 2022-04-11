@@ -567,9 +567,27 @@ uint8* Uncompress(const void* srcdata, int datasize,
 // Computes image information from jpeg header.
 // Returns true on success; false on failure.
 
+// Callback function for error exit
+// 
+
+void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_common_ptr> cinfo) {
+
+    
+  // auto checked_cinfo = cinfo.copy_and_verify([](jpeg_decompress_struct* cinfo) {return cinfo;}); 
+  auto checked_cinfo = cinfo.UNSAFE_unverified();
+
+  // Display Error Message
+  (*checked_cinfo->err->output_message)(checked_cinfo);
+  jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(checked_cinfo->client_data);
+
+
+
+  // Return Control to the setjmp point
+   longjmp(*jpeg_jmpbuf, 1);
+}
+
 bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
                   int* components) {
-
 //char* params = reinterpret_cast<char*> srcdata;
   // Create a new sandbox
   rlbox_sandbox<rlbox_noop_sandbox> sandbox;
@@ -593,11 +611,11 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
   auto& cinfo = *p_cinfo;
    auto& jerr = *p_jerr;
 
- // jmp_buf jpeg_jmpbuf;
+  jmp_buf jpeg_jmpbuf;
  
  // Set up standard JPEG error handling
    cinfo.err  = sandbox.invoke_sandbox_function(jpeg_std_error, &jerr);
-
+/*
   // Override JPEG error exit using jmp_buf
   cinfo.client_data.assign_raw_pointer(sandbox, &jpeg_jmpbuf);
   auto callback = sandbox.register_callback(exit_error_callback);
@@ -636,7 +654,7 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
   sandbox.free_in_sandbox(p_jerr);
   sandbox.destroy_sandbox();
   
-
+*/
   return true;
 }
 

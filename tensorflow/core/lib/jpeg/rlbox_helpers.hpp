@@ -8,7 +8,7 @@
 #include <type_traits>
 #include <utility>
 #ifndef RLBOX_USE_CUSTOM_SHARED_LOCK
-#include <mutex>
+#  include <mutex>
 #endif
 
 #include "rlbox_stdlib_polyfill.hpp"
@@ -98,48 +98,6 @@ namespace detail {
   }                                                                            \
   RLBOX_REQUIRE_SEMI_COLON
 
-#define rlbox_detail_forward_to_const(func_name, result_type)                  \
-  using T_ConstClassPtr = std::add_pointer_t<                                  \
-    std::add_const_t<std::remove_pointer_t<decltype(this)>>>;                  \
-  if constexpr (detail::rlbox_is_tainted_v<result_type> &&                     \
-                !std::is_reference_v<result_type>) {                           \
-    return sandbox_const_cast<detail::rlbox_remove_wrapper_t<result_type>>(    \
-      const_cast<T_ConstClassPtr>(this)->func_name());                         \
-  } else if constexpr (detail::is_fundamental_or_enum_v<result_type> ||        \
-                       detail::is_std_array_v<result_type> ||                  \
-                       detail::is_func_ptr_v<result_type> ||                   \
-                       std::is_class_v<result_type>) {                         \
-    return const_cast<T_ConstClassPtr>(this)->func_name();                     \
-  } else {                                                                     \
-    return const_cast<result_type>(                                            \
-      const_cast<T_ConstClassPtr>(this)->func_name());                         \
-  }
-
-#define rlbox_detail_forward_to_const_a(func_name, result_type, ...)           \
-  using T_ConstClassPtr = std::add_pointer_t<                                  \
-    std::add_const_t<std::remove_pointer_t<decltype(this)>>>;                  \
-  if constexpr (detail::rlbox_is_tainted_v<result_type> &&                     \
-                !std::is_reference_v<result_type>) {                           \
-    static_assert(detail::rlbox_is_tainted_v<result_type>);                    \
-    return sandbox_const_cast<detail::rlbox_remove_wrapper_t<result_type>>(    \
-      const_cast<T_ConstClassPtr>(this)->func_name(__VA_ARGS__));              \
-  } else if constexpr (detail::is_fundamental_or_enum_v<result_type> ||        \
-                       detail::is_std_array_v<result_type> ||                  \
-                       detail::is_func_ptr_v<result_type> ||                   \
-                       std::is_class_v<result_type>) {                         \
-    return const_cast<T_ConstClassPtr>(this)->func_name(__VA_ARGS__);          \
-  } else {                                                                     \
-    return const_cast<result_type>(                                            \
-      const_cast<T_ConstClassPtr>(this)->func_name(__VA_ARGS__));              \
-  }
-
-#define rlbox_detail_member_and_const(sig, ...)                                \
-  sig __VA_ARGS__                                                              \
-                                                                               \
-    sig const __VA_ARGS__                                                      \
-                                                                               \
-    static_assert(true)
-
   template<typename T>
   inline auto remove_volatile_from_ptr_cast(T* ptr)
   {
@@ -174,7 +132,7 @@ namespace detail {
   {
     using T_Result = rlbox::detail::polyfill::invoke_result_t<T>;
 
-    if constexpr (is_void_v<T_Result>) {
+    if constexpr (std::is_void_v<T_Result>) {
       first_task();
       second_task();
     } else {
