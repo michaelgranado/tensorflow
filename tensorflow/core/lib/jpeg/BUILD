@@ -22,9 +22,6 @@ package(
 cc_library(
     name = "jpeg_internal",
     srcs = [
-        "jpeg_handle.cc",
-        "jpeg_mem.cc",
-        "//tensorflow/core/platform:jpeg_hdrs",
         "rlbox.hpp",
         "rlbox_app_pointer.hpp",
         "rlbox_conversion.hpp",
@@ -41,6 +38,9 @@ cc_library(
         "rlbox_types.hpp",
         "rlbox_unwrap.hpp",
         "rlbox_wrapper_traits.hpp",
+        "jpeg_handle.cc",
+        "jpeg_mem.cc",
+        "//tensorflow/core/platform:jpeg_hdrs",
     ],
     hdrs = [
         "jpeg_handle.h",

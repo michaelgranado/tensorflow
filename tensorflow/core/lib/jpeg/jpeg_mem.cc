@@ -44,6 +44,15 @@ using sandbox_type_t = rlbox::rlbox_noop_sandbox;
 
 template<typename T>
 using tainted_img = rlbox::tainted<T, sandbox_type_t>;
+
+struct decoder_error_mgr {
+  struct jpeg_error_mgr pub;    /* "public" fields */
+
+  jmp_buf setjmp_buffer;        /* for return to caller */
+};
+
+typedef struct decoder_error_mgr * my_error_ptr;
+
 rlbox_load_structs_from_library(jpeglib);
 
 namespace tensorflow {
@@ -604,8 +613,7 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
   // Allocate sandboxed memory
   auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>();
    auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>();
- 
-//  auto p_jerr = sandbox.malloc_in_sandbox<decoder_error_mgr>();
+  //  auto p_jerr = sandbox.malloc_in_sandbox<decoder_error_mgr>();
 
   // Initialize the normal libjpeg structures in sandboxed memory
   auto& cinfo = *p_cinfo;
