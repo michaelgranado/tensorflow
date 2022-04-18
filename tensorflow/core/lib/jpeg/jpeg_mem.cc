@@ -616,23 +616,24 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
   //  auto p_jerr = sandbox.malloc_in_sandbox<decoder_error_mgr>();
 
   // Initialize the normal libjpeg structures in sandboxed memory
-  auto& cinfo = *p_cinfo;
-   auto& jerr = *p_jerr;
+//  auto& cinfo = *p_cinfo;
+ //  auto& jerr = *p_jerr;
 
   jmp_buf jpeg_jmpbuf;
  
  // Set up standard JPEG error handling
-   cinfo.err  = sandbox.invoke_sandbox_function(jpeg_std_error, &jerr);
-/*
+   p_cinfo->err  = sandbox.invoke_sandbox_function(jpeg_std_error, p_jerr);
+
   // Override JPEG error exit using jmp_buf
-  cinfo.client_data.assign_raw_pointer(sandbox, &jpeg_jmpbuf);
+  p_cinfo->client_data.assign_raw_pointer(sandbox, &jpeg_jmpbuf);
   auto callback = sandbox.register_callback(exit_error_callback);
-  jerr.error_exit = callback;
+  
+  p_jerr->error_exit = callback;
 
   //Establish the setjmp return context
   if (setjmp(jpeg_jmpbuf)) {
     // Clean up
-    sandbox.invoke_sandbox_function(jpeg_destroy_decompress, &cinfo);
+    sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
   sandbox.free_in_sandbox(p_cinfo);
   sandbox.free_in_sandbox(p_jerr);
   sandbox.destroy_sandbox();
@@ -640,29 +641,29 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
   }
 
   // Initialize JPEG Decompression Object
-  sandbox.invoke_sandbox_function(jpeg_CreateDecompress, &cinfo, JPEG_LIB_VERSION, (size_t) sizeof(struct jpeg_decompress_struct));
+  sandbox.invoke_sandbox_function(jpeg_CreateDecompress, p_cinfo, JPEG_LIB_VERSION, (size_t) sizeof(struct jpeg_decompress_struct));
   
   // TODO: I/O handling in jpeg_handle.cc
-  sandbox.invoke_sandbox_function(SetSrc, &cinfo, unchecked_params, datasize, false);
+  sandbox.invoke_sandbox_function(SetSrc, p_cinfo, unchecked_params, datasize, false);
  
   // Read File Paramters
-  sandbox.invoke_sandbox_function(jpeg_read_header, &cinfo, TRUE);
-  sandbox.invoke_sandbox_function(jpeg_calc_output_dimensions, &cinfo);
+  sandbox.invoke_sandbox_function(jpeg_read_header, p_cinfo, TRUE);
+  sandbox.invoke_sandbox_function(jpeg_calc_output_dimensions, p_cinfo);
 
   // Save Data
-  if (width) *width = cinfo.output_width.UNSAFE_unverified();
-  if (height) *height = cinfo.output_height.UNSAFE_unverified();
-  if (components) *components = cinfo.output_components.UNSAFE_unverified();
+  if (width) *width = p_cinfo->output_width.UNSAFE_unverified();
+  if (height) *height = p_cinfo->output_height.UNSAFE_unverified();
+  if (components) *components = p_cinfo->output_components.UNSAFE_unverified();
   
   // Clean Up and Release Memory
-  sandbox.invoke_sandbox_function(jpeg_destroy_decompress, &cinfo);
+  sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
   
   // Free Sandbox
   sandbox.free_in_sandbox(p_cinfo);
   sandbox.free_in_sandbox(p_jerr);
   sandbox.destroy_sandbox();
   
-*/
+
   return true;
 }
 
