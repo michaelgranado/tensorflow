@@ -112,7 +112,26 @@ bool IsCropWindowValid(const UncompressFlags& flags, int input_image_width,
 void no_print(j_common_ptr cinfo) {}
 #endif
 
+// Callback function for error exit
+// 
+
+void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_common_ptr> cinfo) {
+
+  // auto checked_cinfo = cinfo.copy_and_verify([](jpeg_decompress_struct* cinfo) {return cinfo;}); 
+  auto checked_cinfo = cinfo.UNSAFE_unverified();
+
+  // Display Error Message
+  (*checked_cinfo->err->output_message)(checked_cinfo);
+  jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(checked_cinfo->client_data);
+
+  // Return Control to the setjmp point
+   longjmp(*jpeg_jmpbuf, 1);
+}
 uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
+
+  rlbox_sandbox<rlbox_noop_sandbox> sandbox;
+  sandbox.create_sandbox();
+
   // unpack the argball
   const int datasize = argball->datasize_;
   const auto& flags = argball->flags_;
@@ -134,86 +153,102 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   // if empty image, return
   if (datasize == 0 || srcdata == nullptr) return nullptr;
 
+  auto unchecked_srcdata = sandbox.malloc_in_sandbox<unsigned char>(datasize);
+  memcpy(sandbox, unchecked_srcdata, srcdata, datasize);
+
   // Declare temporary buffer pointer here so that we can free on error paths
-  JSAMPLE* tempdata = nullptr;
+  //JSAMPLE* tempdata = nullptr;
+  auto p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE>();
 
   // Initialize libjpeg structures to have a memory source
   // Modify the usual jpeg error manager to catch fatal errors.
   JPEGErrors error = JPEGERRORS_OK;
-  struct jpeg_decompress_struct cinfo;
-  struct jpeg_error_mgr jerr;
-  cinfo.err = jpeg_std_error(&jerr);
-  jerr.error_exit = CatchError;
-
-#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
-  jerr.output_message = no_print;
-#endif
-
+  auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>();
+  auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>();
   jmp_buf jpeg_jmpbuf;
-  cinfo.client_data = &jpeg_jmpbuf;
+
+  p_cinfo->err  = sandbox.invoke_sandbox_function(jpeg_std_error, p_jerr);
+#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+  jerr->output_message = no_print;
+#endif
+  // Override JPEG error exit using jmp_buf
+  p_cinfo->client_data.assign_raw_pointer(sandbox, &jpeg_jmpbuf);
+  auto callback = sandbox.register_callback(exit_error_callback);
+   p_jerr->error_exit = callback;
   if (setjmp(jpeg_jmpbuf)) {
-    delete[] tempdata;
+    sandbox.free_in_sandbox(p_tempdata);
     return nullptr;
   }
 
-  jpeg_create_decompress(&cinfo);
-  SetSrc(&cinfo, srcdata, datasize, flags.try_recover_truncated_jpeg);
-  jpeg_read_header(&cinfo, TRUE);
+  //jpeg_create_decompress(&cinfo);
+  //SetSrc(&cinfo, srcdata, datasize, flags.try_recover_truncated_jpeg);
+ // jpeg_read_header(&cinfo, TRUE);
+  // Initialize JPEG Decompression Object
+  sandbox.invoke_sandbox_function(jpeg_CreateDecompress, p_cinfo, JPEG_LIB_VERSION, (size_t) sizeof(struct jpeg_decompress_struct));
+  // I/O
+  // TODO:SRC in jpeg_handle.h
+  sandbox.invoke_sandbox_function(SetSrc, p_cinfo, unchecked_srcdata, datasize, flags.try_recover_truncated_jpeg);
+ 
+  // Read File Paramters
+  sandbox.invoke_sandbox_function(jpeg_read_header, p_cinfo, TRUE);
 
   // Set components automatically if desired, autoconverting cmyk to rgb.
-  if (components == 0) components = std::min(cinfo.num_components, 3);
+  if (components == 0) components = std::min(p_cinfo->num_components.unverified_safe_because("We are just checking integer values"), 3);
 
   // set grayscale and ratio parameters
   switch (components) {
     case 1:
-      cinfo.out_color_space = JCS_GRAYSCALE;
+      p_cinfo->out_color_space = JCS_GRAYSCALE;
       break;
     case 3:
-      if (cinfo.jpeg_color_space == JCS_CMYK ||
-          cinfo.jpeg_color_space == JCS_YCCK) {
+      if (p_cinfo->jpeg_color_space.unverified_safe_because("We are error checking")  == JCS_CMYK ||
+          p_cinfo->jpeg_color_space.unverified_safe_because("We are error checking") == JCS_YCCK) {
         // Always use cmyk for output in a 4 channel jpeg. libjpeg has a
         // built-in decoder.  We will further convert to rgb below.
-        cinfo.out_color_space = JCS_CMYK;
+        p_cinfo->out_color_space = JCS_CMYK;
       } else {
-        cinfo.out_color_space = JCS_RGB;
+        p_cinfo->out_color_space = JCS_RGB;
       }
       break;
     default:
       LOG(ERROR) << " Invalid components value " << components << std::endl;
-      jpeg_destroy_decompress(&cinfo);
+      sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
       return nullptr;
   }
-  cinfo.do_fancy_upsampling = boolean(flags.fancy_upscaling);
-  cinfo.scale_num = 1;
-  cinfo.scale_denom = ratio;
-  cinfo.dct_method = flags.dct_method;
+  p_cinfo->do_fancy_upsampling = boolean(flags.fancy_upscaling);
+  p_cinfo->scale_num = 1;
+  p_cinfo->scale_denom = ratio;
+  p_cinfo->dct_method = flags.dct_method;
 
   // Determine the output image size before attempting decompress to prevent
   // OOM'ing during the decompress
-  jpeg_calc_output_dimensions(&cinfo);
-
-  int64_t total_size = static_cast<int64_t>(cinfo.output_height) *
-                       static_cast<int64_t>(cinfo.output_width) *
-                       static_cast<int64_t>(cinfo.num_components);
+  sandbox.invoke_sandbox_function(jpeg_calc_output_dimensions, p_cinfo);
+  int64_t total_size = static_cast<int64_t>(p_cinfo->output_height.unverified_safe_because("We will error check after")) *
+                       static_cast<int64_t>(p_cinfo->output_width.unverified_safe_because("We will error check after")) *
+                       static_cast<int64_t>(p_cinfo->num_components.unverified_safe_because("We will error check after"));
   // Some of the internal routines do not gracefully handle ridiculously
   // large images, so fail fast.
-  if (cinfo.output_width <= 0 || cinfo.output_height <= 0) {
-    LOG(ERROR) << "Invalid image size: " << cinfo.output_width << " x "
-               << cinfo.output_height;
-    jpeg_destroy_decompress(&cinfo);
+  
+  if (p_cinfo->output_width.unverified_safe_because("We are error checking") <= 0 || p_cinfo->output_height.unverified_safe_because("We are error checking") <= 0) {
+    LOG(ERROR) << "Invalid image size: " << p_cinfo->output_width.unverified_safe_because("We are printing error message") << " x "
+               << p_cinfo->output_height.unverified_safe_because("We are printing error message");
+    sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
     return nullptr;
   }
   if (total_size >= (1LL << 29)) {
     LOG(ERROR) << "Image too large: " << total_size;
-    jpeg_destroy_decompress(&cinfo);
+    sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
     return nullptr;
   }
 
-  jpeg_start_decompress(&cinfo);
+  sandbox.invoke_sandbox_function(jpeg_start_decompress, p_cinfo);
 
-  JDIMENSION target_output_width = cinfo.output_width;
-  JDIMENSION target_output_height = cinfo.output_height;
-  JDIMENSION skipped_scanlines = 0;
+  JDIMENSION target_output_width = p_cinfo->output_width.unverified_safe_because("We won't accept these values, but rather ensure we can accomodate any value");
+  JDIMENSION target_output_height = p_cinfo->output_height.unverified_safe_because("We won't accept these values, but rather ensure we can accomodate any value");
+ // JDIMENSION skipped_scanlines = 0;
+  auto p_skipped_scanlines = sandbox.malloc_in_sandbox<JDIMENSION>();
+  *p_skipped_scanlines = 0;
+  
 #if defined(LIBJPEG_TURBO_VERSION)
   if (flags.crop) {
     // Update target output height and width based on crop window.
@@ -221,13 +256,13 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     target_output_width = flags.crop_width;
 
     // So far, cinfo holds the original input image information.
-    if (!IsCropWindowValid(flags, cinfo.output_width, cinfo.output_height)) {
+    if (!IsCropWindowValid(flags, p_cinfo->output_width.UNSAFE_unverified(), p_cinfo->output_height.UNSAFE_unverified())) {
       LOG(ERROR) << "Invalid crop window: x=" << flags.crop_x
                  << ", y=" << flags.crop_y << ", w=" << target_output_width
                  << ", h=" << target_output_height
-                 << " for image_width: " << cinfo.output_width
-                 << " and image_height: " << cinfo.output_height;
-      jpeg_destroy_decompress(&cinfo);
+                 << " for image_width: " << p_cinfo->output_width.UNSAFE_unverified()
+                 << " and image_height: " << p_cinfo->output_height.UNSAFE_unverified();
+      sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
       return nullptr;
     }
 
@@ -236,13 +271,18 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     // be moved left to the nearest MCU boundary, and width will be increased
     // accordingly. Therefore, the final cinfo.crop_width might differ from the
     // given flags.crop_width. Please see libjpeg library for details.
-    JDIMENSION crop_width = flags.crop_width;
-    JDIMENSION crop_x = flags.crop_x;
-    jpeg_crop_scanline(&cinfo, &crop_x, &crop_width);
+     // JDIMENSION crop_width = flags.crop_width;
+     // JDIMENSION crop_x = flags.crop_x;
+    auto p_crop_width = sandbox.malloc_in_sandbox<JDIMENSION>();
+    *p_crop_width = flags.crop_width;
+    auto p_crop_x = sandbox.malloc_in_sandbox<JDIMENSION>();
+    *p_crop_x = flags.crop_x;
+
+    sandbox.invoke_sandbox_function(jpeg_crop_scanline, p_cinfo, p_crop_x, p_crop_width);
 
     // Update cinfo.output_scanline.
-    skipped_scanlines = jpeg_skip_scanlines(&cinfo, flags.crop_y);
-    CHECK_EQ(skipped_scanlines, flags.crop_y);
+    *p_skipped_scanlines = sandbox.invoke_sandbox_function(jpeg_skip_scanlines, p_cinfo, flags.crop_y);
+    CHECK_EQ((*p_skipped_scanlines).unverified_safe_because("We are error checking"), flags.crop_y);
   }
 #endif
 
@@ -252,7 +292,7 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     stride = min_stride;
   } else if (stride < min_stride) {
     LOG(ERROR) << "Incompatible stride: " << stride << " < " << min_stride;
-    jpeg_destroy_decompress(&cinfo);
+    sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
     return nullptr;
   }
 
@@ -261,22 +301,30 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   argball->stride_ = stride;
 
 #if !defined(LIBJPEG_TURBO_VERSION)
-  uint8* dstdata = nullptr;
+   uint8* dstdata = nullptr;
+  //auto p_dstdata = sandbox.malloc_in_sandbox<uint8>();
   if (flags.crop) {
-    dstdata = new JSAMPLE[stride * target_output_height];
+    auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(stride * target_output_height);
+    //dstdata = new JSAMPLE[stride * target_output_height];
   } else {
     dstdata = argball->allocate_output_(target_output_width,
                                         target_output_height, components);
+    memcpy(sandbox, p_dstdata, dstdata, components);
   }
 #else
-  uint8* dstdata = argball->allocate_output_(target_output_width,
-                                             target_output_height, components);
+   uint8* dstdata = argball->allocate_output_(target_output_width,
+                                            target_output_height, components);
+    auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(stride * target_output_height);
+    memcpy(sandbox, p_dstdata, dstdata, components);
+
 #endif
-  if (dstdata == nullptr) {
-    jpeg_destroy_decompress(&cinfo);
+
+  if (p_dstdata == nullptr) {
+    sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
     return nullptr;
   }
-  JSAMPLE* output_line = static_cast<JSAMPLE*>(dstdata);
+//  JSAMPLE* output_line = static_cast<JSAMPLE*>(dstdata);
+
 
   // jpeg_read_scanlines requires the buffers to be allocated based on
   // cinfo.output_width, but the target image width might be different if crop
@@ -285,15 +333,19 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   // cinfo.output_width needs to fall on MCU boundary, while cinfo.output_height
   // has no such constraint.
   const bool need_realign_cropped_scanline =
-      (target_output_width != cinfo.output_width);
-  const bool use_cmyk = (cinfo.out_color_space == JCS_CMYK);
+      (target_output_width != p_cinfo->output_width.unverified_safe_because("We will realign"));
+  const bool use_cmyk = (p_cinfo->out_color_space.unverified_safe_because("We set cymk flag") == JCS_CMYK);
 
   if (use_cmyk) {
     // Temporary buffer used for CMYK -> RGB conversion.
-    tempdata = new JSAMPLE[cinfo.output_width * 4];
+      sandbox.free_in_sandbox(p_tempdata);
+      auto p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE>(p_cinfo->output_width.unverified_safe_because("Temporary Buffer for CYMK -> RGB Conversion") * 4);
+  //  tempdata = new JSAMPLE[cinfo.output_width * 4];
   } else if (need_realign_cropped_scanline) {
     // Temporary buffer used for MCU-aligned scanline data.
-    tempdata = new JSAMPLE[cinfo.output_width * components];
+    sandbox.free_in_sandbox(p_tempdata);
+    auto p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE>(p_cinfo->output_width.unverified_safe_because("Temporary Buffer for MCU-aligned scanline data") * components);
+    //tempdata = new JSAMPLE[cinfo.output_width * components];
   }
 
   // If there is an error reading a line, this aborts the reading.
@@ -301,13 +353,21 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   argball->height_read_ = target_output_height;
 
   // These variables are just to avoid repeated computation in the loop.
-  const int max_scanlines_to_read = skipped_scanlines + target_output_height;
+  const int max_scanlines_to_read = (*p_skipped_scanlines).unverified_safe_because("Avoid repeated Loop") + target_output_height;
+
+  
   const int mcu_align_offset =
-      (cinfo.output_width - target_output_width) * (use_cmyk ? 4 : components);
-  while (cinfo.output_scanline < max_scanlines_to_read) {
-    int num_lines_read = 0;
+      (p_cinfo->output_width.UNSAFE_unverified() - target_output_width) * (use_cmyk ? 4 : components);
+/*
+  // auto p_alloc_sarray = p_cinfo->mem->alloc_sarray.copy_and_verify_address(T_Ret(*)(uintptr_t));
+  auto p_alloc_sarray = p_cinfo->mem->alloc_sarray;
+
+  while (p_cinfo->output_scanline.UNSAFE_unverified() < max_scanlines_to_read) {
+    auto num_lines_read = sandbox.malloc_in_sandbox<int>(sizeof(int));
     if (use_cmyk) {
-      num_lines_read = jpeg_read_scanlines(&cinfo, &tempdata, 1);
+      *num_lines_read = sandbox.invoke_sandbox_function(jpeg_read_scanlines, p_cinfo, tempdata, 1).UNSAFE_unverified();
+    }
+   
       if (num_lines_read > 0) {
         // Convert CMYK to RGB if scanline read succeeded.
         for (size_t i = 0; i < target_output_width; ++i) {
@@ -373,7 +433,9 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     DCHECK_EQ(num_lines_read, 1);
     TF_ANNOTATE_MEMORY_IS_INITIALIZED(output_line, min_stride);
     output_line += stride;
+
   }
+  
   delete[] tempdata;
   tempdata = nullptr;
 
@@ -514,6 +576,8 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
 
   jpeg_destroy_decompress(&cinfo);
   return dstdata;
+  */
+  return nullptr;
 }
 
 }  // anonymous namespace
@@ -576,24 +640,6 @@ uint8* Uncompress(const void* srcdata, int datasize,
 // Computes image information from jpeg header.
 // Returns true on success; false on failure.
 
-// Callback function for error exit
-// 
-
-void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_common_ptr> cinfo) {
-
-    
-  // auto checked_cinfo = cinfo.copy_and_verify([](jpeg_decompress_struct* cinfo) {return cinfo;}); 
-  auto checked_cinfo = cinfo.UNSAFE_unverified();
-
-  // Display Error Message
-  (*checked_cinfo->err->output_message)(checked_cinfo);
-  jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(checked_cinfo->client_data);
-
-
-
-  // Return Control to the setjmp point
-   longjmp(*jpeg_jmpbuf, 1);
-}
 
 bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
                   int* components) {
@@ -673,6 +719,8 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
 namespace {
 bool CompressInternal(const uint8* srcdata, int width, int height,
                       const CompressFlags& flags, tstring* output) {
+  rlbox_sandbox<rlbox_noop_sandbox> sandbox;
+  sandbox.create_sandbox();
   if (output == nullptr) {
     LOG(ERROR) << "Output buffer is null: ";
     return false;
