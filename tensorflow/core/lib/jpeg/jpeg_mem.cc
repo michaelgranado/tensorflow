@@ -324,7 +324,7 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     return nullptr;
   }
 //  JSAMPLE* output_line = static_cast<JSAMPLE*>(dstdata);
-
+   
 
   // jpeg_read_scanlines requires the buffers to be allocated based on
   // cinfo.output_width, but the target image width might be different if crop
@@ -355,23 +355,17 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   // These variables are just to avoid repeated computation in the loop.
   const int max_scanlines_to_read = (*p_skipped_scanlines).unverified_safe_because("Avoid repeated Loop") + target_output_height;
 
- /*TODO 
   const int mcu_align_offset =
       (p_cinfo->output_width.UNSAFE_unverified() - target_output_width) * (use_cmyk ? 4 : components);
-
-  auto p_alloc_sarray = sandbox.get_sandbox_function_address(p_cinfo.UNSAFE_unverified()->mem->alloc_sarray);
-  tainted_img<JSAMPARRAY> pBufferVal = sandbox.invoke_sandbox_function(*p_alloc_sarray, p_cinfo  hack - we need to temporarily remove wrapper to cast, 
-                JPOOL_IMAGE, stride, 1);
+  auto arr_p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE*>(1 * sizeof(JSAMPLE*));
+  arr_p_tempdata[0] = p_tempdata;
+  auto arr_p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE*>(1 * sizeof(JSAMPLE*));
+  arr_p_dstdata[0] = p_dstdata;
   
-  // auto p_alloc_sarray = p_cinfo->mem->alloc_sarray.copy_and_verify_address(T_Ret(*)(uintptr_t));
-  auto p_alloc_sarray = p_cinfo->mem->alloc_sarray;
-
   while (p_cinfo->output_scanline.UNSAFE_unverified() < max_scanlines_to_read) {
-    auto num_lines_read = sandbox.malloc_in_sandbox<int>(sizeof(int));
+    int num_lines_read = 0;
     if (use_cmyk) {
-      *num_lines_read = sandbox.invoke_sandbox_function(jpeg_read_scanlines, p_cinfo, tempdata, 1).UNSAFE_unverified();
-    }
-   
+      num_lines_read = sandbox.invoke_sandbox_function(jpeg_read_scanlines, p_cinfo, arr_p_tempdata, 1).UNSAFE_unverified();
       if (num_lines_read > 0) {
         // Convert CMYK to RGB if scanline read succeeded.
         for (size_t i = 0; i < target_output_width; ++i) {
@@ -380,12 +374,12 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
             // Align the offset for MCU boundary.
             offset += mcu_align_offset;
           }
-          const int c = tempdata[offset + 0];
-          const int m = tempdata[offset + 1];
-          const int y = tempdata[offset + 2];
-          const int k = tempdata[offset + 3];
+          const int c = p_tempdata[offset + 0].UNSAFE_unverified();
+          const int m = p_tempdata[offset + 1].UNSAFE_unverified();
+          const int y = p_tempdata[offset + 2].UNSAFE_unverified();
+          const int k = p_tempdata[offset + 3].UNSAFE_unverified();
           int r, g, b;
-          if (cinfo.saw_Adobe_marker) {
+          if (p_cinfo->saw_Adobe_marker.UNSAFE_unverified()) {
             r = (k * c) / 255;
             g = (k * m) / 255;
             b = (k * y) / 255;
@@ -394,65 +388,70 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
             g = (255 - k) * (255 - m) / 255;
             b = (255 - k) * (255 - y) / 255;
           }
-          output_line[3 * i + 0] = r;
-          output_line[3 * i + 1] = g;
-          output_line[3 * i + 2] = b;
+          p_dstdata[3 * i + 0] = r;
+          p_dstdata[3 * i + 1] = g;
+          p_dstdata[3 * i + 2] = b;
         }
       }
     } else if (need_realign_cropped_scanline) {
-      num_lines_read = jpeg_read_scanlines(&cinfo, &tempdata, 1);
+     // num_lines_read = jpeg_read_scanlines(&cinfo, &tempdata, 1);
+      num_lines_read = sandbox.invoke_sandbox_function(jpeg_read_scanlines, p_cinfo, arr_p_tempdata, 1).UNSAFE_unverified();
       if (num_lines_read > 0) {
-        memcpy(output_line, tempdata + mcu_align_offset, min_stride);
+        memcpy(sandbox, p_dstdata, p_tempdata + mcu_align_offset, min_stride);
       }
     } else {
-      num_lines_read = jpeg_read_scanlines(&cinfo, &output_line, 1);
+      //num_lines_read = jpeg_read_scanlines(&cinfo, &output_line, 1);
+      num_lines_read = sandbox.invoke_sandbox_function(jpeg_read_scanlines, p_cinfo, arr_p_dstdata, 1).UNSAFE_unverified();
     }
+    
     // Handle error cases
     if (num_lines_read == 0) {
       LOG(ERROR) << "Premature end of JPEG data. Stopped at line "
-                 << cinfo.output_scanline - skipped_scanlines << "/"
+                 << p_cinfo->output_scanline.UNSAFE_unverified() - *p_skipped_scanlines.UNSAFE_unverified() << "/"
                  << target_output_height;
       if (!flags.try_recover_truncated_jpeg) {
-        argball->height_read_ = cinfo.output_scanline - skipped_scanlines;
+        argball->height_read_ = p_cinfo->output_scanline.UNSAFE_unverified() - *p_skipped_scanlines.UNSAFE_unverified();
         error = JPEGERRORS_UNEXPECTED_END_OF_DATA;
       } else {
-        for (size_t line = cinfo.output_scanline; line < max_scanlines_to_read;
+        for (size_t line = p_cinfo->output_scanline.UNSAFE_unverified(); line < max_scanlines_to_read;
              ++line) {
           if (line == 0) {
             // If even the first line is missing, fill with black color
-            memset(output_line, 0, min_stride);
+            memset(sandbox, p_dstdata, 0, min_stride);
           } else {
             // else, just replicate the line above.
-            memcpy(output_line, output_line - stride, min_stride);
+            memcpy(sandbox, p_dstdata, p_dstdata - stride, min_stride);
           }
-          output_line += stride;
+          p_dstdata += stride;
         }
         argball->height_read_ =
             target_output_height;  // consider all lines as read
         // prevent error-on-exit in libjpeg:
-        cinfo.output_scanline = max_scanlines_to_read;
+        p_cinfo->output_scanline = max_scanlines_to_read;
       }
       break;
     }
     DCHECK_EQ(num_lines_read, 1);
-    TF_ANNOTATE_MEMORY_IS_INITIALIZED(output_line, min_stride);
-    output_line += stride;
+    TF_ANNOTATE_MEMORY_IS_INITIALIZED(p_dstdata, min_stride);
+    p_dstdata += stride;
 
   }
   
-  delete[] tempdata;
-  tempdata = nullptr;
+  //delete[] tempdata;
+  sandbox.free_in_sandbox(p_tempdata);
+  p_tempdata = nullptr;
 
 #if defined(LIBJPEG_TURBO_VERSION)
-  if (flags.crop && cinfo.output_scanline < cinfo.output_height) {
+  if (flags.crop && p_cinfo->output_scanline.UNSAFE_unverified() < p_cinfo->output_height.UNSAFE_unverified()) {
     // Skip the rest of scanlines, required by jpeg_destroy_decompress.
-    jpeg_skip_scanlines(&cinfo,
-                        cinfo.output_height - flags.crop_y - flags.crop_height);
+    /*jpeg_skip_scanlines(&cinfo,
+                        cinfo.output_height - flags.crop_y - flags.crop_height);*/
+    sandbox.invoke_sandbox_function(jpeg_skip_scanlines, p_cinfo, p_cinfo->output_height - flags.crop_y - flags.crop_height);
     // After this, cinfo.output_height must be equal to cinfo.output_height;
     // otherwise, jpeg_destroy_decompress would fail.
   }
 #endif
-
+/*
   // Convert the RGB data to RGBA, with alpha set to 0xFF to indicate
   // opacity.
   // RGBRGBRGB... --> RGBARGBARGBA...
@@ -480,21 +479,22 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
       }
     }
   }
+*/
 
   switch (components) {
     case 1:
-      if (cinfo.output_components != 1) {
+      if (p_cinfo->output_components.UNSAFE_unverified() != 1) {
         error = JPEGERRORS_BAD_PARAM;
       }
       break;
     case 3:
     case 4:
-      if (cinfo.out_color_space == JCS_CMYK) {
-        if (cinfo.output_components != 4) {
+      if (p_cinfo->out_color_space.UNSAFE_unverified() == JCS_CMYK) {
+        if (p_cinfo->output_components.UNSAFE_unverified() != 4) {
           error = JPEGERRORS_BAD_PARAM;
         }
       } else {
-        if (cinfo.output_components != 3) {
+        if (p_cinfo->output_components.UNSAFE_unverified() != 3) {
           error = JPEGERRORS_BAD_PARAM;
         }
       }
@@ -502,23 +502,28 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     default:
       // will never happen, should be caught by the previous switch
       LOG(ERROR) << "Invalid components value " << components << std::endl;
-      jpeg_destroy_decompress(&cinfo);
+      //jpeg_destroy_decompress(&cinfo);
+      sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
+      sandbox.free_in_sandbox(p_cinfo);
       return nullptr;
   }
 
   // save number of warnings if requested
   if (nwarn != nullptr) {
-    *nwarn = cinfo.err->num_warnings;
+    *nwarn = p_cinfo->err->num_warnings.UNSAFE_unverified();
   }
 
   // Handle errors in JPEG
   switch (error) {
     case JPEGERRORS_OK:
-      jpeg_finish_decompress(&cinfo);
+      //jpeg_finish_decompress(&cinfo);
+      sandbox.invoke_sandbox_function(jpeg_finish_decompress, p_cinfo);
       break;
     case JPEGERRORS_UNEXPECTED_END_OF_DATA:
     case JPEGERRORS_BAD_PARAM:
+      /*TODO
       jpeg_abort(reinterpret_cast<j_common_ptr>(&cinfo));
+      */
       break;
     default:
       LOG(ERROR) << "Unhandled case " << error;
@@ -534,17 +539,20 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     target_output_width = flags.crop_width;
 
     // cinfo holds the original input image information.
-    if (!IsCropWindowValid(flags, cinfo.output_width, cinfo.output_height)) {
+    if (!IsCropWindowValid(flags, p_cinfo->output_width.UNSAFE_unverified(), p_cinfo->output_height.UNSAFE_unverified())) {
       LOG(ERROR) << "Invalid crop window: x=" << flags.crop_x
                  << ", y=" << flags.crop_y << ", w=" << target_output_width
                  << ", h=" << target_output_height
-                 << " for image_width: " << cinfo.output_width
-                 << " and image_height: " << cinfo.output_height;
-      delete[] dstdata;
-      jpeg_destroy_decompress(&cinfo);
+                 << " for image_width: " << p_cinfo->output_width.UNSAFE_unverified()
+                 << " and image_height: " << p_cinfo->output_height.UNSAFE_unverified();
+      //delete[] dstdata;
+      sandbox.free_in_sandbox(p_dstdata);
+      //jpeg_destroy_decompress(&cinfo);
+      sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
+      sandbox.free_in_sandbox(p_cinfo);
       return nullptr;
     }
-
+    /*TODO
     const uint8* full_image = dstdata;
     dstdata = argball->allocate_output_(target_output_width,
                                         target_output_height, components);
@@ -576,12 +584,13 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     }
     delete[] full_image;
   }
+  */
 #endif
 
-  jpeg_destroy_decompress(&cinfo);
+//  jpeg_destroy_decompress(&cinfo); 
+  sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
+  sandbox.free_in_sandbox(p_cinfo); 
   return dstdata;
-  */
-  return nullptr;
 }
 
 }  // anonymous namespace
