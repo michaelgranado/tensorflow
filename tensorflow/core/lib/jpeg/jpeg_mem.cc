@@ -153,18 +153,18 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   // if empty image, return
   if (datasize == 0 || srcdata == nullptr) return nullptr;
 
-  auto unchecked_srcdata = sandbox.malloc_in_sandbox<unsigned char>(datasize);
+  auto unchecked_srcdata = sandbox.malloc_in_sandbox<unsigned char>(datasize * sizeof(unsigned char));
   memcpy(sandbox, unchecked_srcdata, srcdata, datasize);
 
   // Declare temporary buffer pointer here so that we can free on error paths
   //JSAMPLE* tempdata = nullptr;
-  auto p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE>();
+  auto p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE));
 
   // Initialize libjpeg structures to have a memory source
   // Modify the usual jpeg error manager to catch fatal errors.
   JPEGErrors error = JPEGERRORS_OK;
-  auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>();
-  auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>();
+  auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>(sizeof(jpeg_decompress_struct));
+  auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>(sizeof(jpeg_error_mgr));
   jmp_buf jpeg_jmpbuf;
 
   p_cinfo->err  = sandbox.invoke_sandbox_function(jpeg_std_error, p_jerr);
@@ -246,7 +246,7 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   JDIMENSION target_output_width = p_cinfo->output_width.unverified_safe_because("We won't accept these values, but rather ensure we can accomodate any value");
   JDIMENSION target_output_height = p_cinfo->output_height.unverified_safe_because("We won't accept these values, but rather ensure we can accomodate any value");
  // JDIMENSION skipped_scanlines = 0;
-  auto p_skipped_scanlines = sandbox.malloc_in_sandbox<JDIMENSION>();
+  auto p_skipped_scanlines = sandbox.malloc_in_sandbox<JDIMENSION>(sizeof(JDIMENSION));
   *p_skipped_scanlines = 0;
   
 #if defined(LIBJPEG_TURBO_VERSION)
@@ -273,9 +273,9 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     // given flags.crop_width. Please see libjpeg library for details.
      // JDIMENSION crop_width = flags.crop_width;
      // JDIMENSION crop_x = flags.crop_x;
-    auto p_crop_width = sandbox.malloc_in_sandbox<JDIMENSION>();
+    auto p_crop_width = sandbox.malloc_in_sandbox<JDIMENSION>(sizeof(JDIMENSION));
     *p_crop_width = flags.crop_width;
-    auto p_crop_x = sandbox.malloc_in_sandbox<JDIMENSION>();
+    auto p_crop_x = sandbox.malloc_in_sandbox<JDIMENSION>(sizeof(JDIMENSION));
     *p_crop_x = flags.crop_x;
 
     sandbox.invoke_sandbox_function(jpeg_crop_scanline, p_cinfo, p_crop_x, p_crop_width);
@@ -304,7 +304,7 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
    uint8* dstdata = nullptr;
   //auto p_dstdata = sandbox.malloc_in_sandbox<uint8>();
   if (flags.crop) {
-    auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(stride * target_output_height);
+    auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * stride * target_output_height);
     //dstdata = new JSAMPLE[stride * target_output_height];
   } else {
     dstdata = argball->allocate_output_(target_output_width,
@@ -314,7 +314,7 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
 #else
    uint8* dstdata = argball->allocate_output_(target_output_width,
                                             target_output_height, components);
-    auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(stride * target_output_height);
+    auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * stride * target_output_height);
     memcpy(sandbox, p_dstdata, dstdata, components);
 
 #endif
@@ -339,12 +339,12 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   if (use_cmyk) {
     // Temporary buffer used for CMYK -> RGB conversion.
       sandbox.free_in_sandbox(p_tempdata);
-      auto p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE>(p_cinfo->output_width.unverified_safe_because("Temporary Buffer for CYMK -> RGB Conversion") * 4);
+      auto p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * p_cinfo->output_width.unverified_safe_because("Temporary Buffer for CYMK -> RGB Conversion") * 4);
   //  tempdata = new JSAMPLE[cinfo.output_width * 4];
   } else if (need_realign_cropped_scanline) {
     // Temporary buffer used for MCU-aligned scanline data.
     sandbox.free_in_sandbox(p_tempdata);
-    auto p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE>(p_cinfo->output_width.unverified_safe_because("Temporary Buffer for MCU-aligned scanline data") * components);
+    auto p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * p_cinfo->output_width.unverified_safe_because("Temporary Buffer for MCU-aligned scanline data") * components);
     //tempdata = new JSAMPLE[cinfo.output_width * components];
   }
 
@@ -451,7 +451,7 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     // otherwise, jpeg_destroy_decompress would fail.
   }
 #endif
-/*
+
   // Convert the RGB data to RGBA, with alpha set to 0xFF to indicate
   // opacity.
   // RGBRGBRGB... --> RGBARGBARGBA...
@@ -479,7 +479,7 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
       }
     }
   }
-*/
+
 
   switch (components) {
     case 1:
@@ -667,11 +667,11 @@ bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
 
   // If empty image, return
   if (datasize == 0 || srcdata == nullptr) return false;
- auto unchecked_params = sandbox.malloc_in_sandbox<unsigned char>(datasize);
+ auto unchecked_params = sandbox.malloc_in_sandbox<unsigned char>(sizeof(unsigned char) * datasize);
  memcpy(sandbox, unchecked_params, srcdata, datasize);
   // Allocate sandboxed memory
-  auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>();
-   auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>();
+  auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>(sizeof(jpeg_decompress_struct));
+   auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>(sizeof(jpeg_error_mgr));
   //  auto p_jerr = sandbox.malloc_in_sandbox<decoder_error_mgr>();
 
   // Initialize the normal libjpeg structures in sandboxed memory
@@ -764,7 +764,7 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
   }
 
  // JOCTET* buffer = nullptr;
- auto p_buffer = sandbox.malloc_in_sandbox<JOCTET>();
+ auto p_buffer = sandbox.malloc_in_sandbox<JOCTET>(sizeof(JOCTET));
 
   // NOTE: for broader use xmp_metadata should be made a Unicode string
   CHECK(srcdata != nullptr);
@@ -772,10 +772,10 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
   // This struct contains the JPEG compression parameters and pointers to
   // working space
   //struct jpeg_compress_struct cinfo;
-  auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_compress_struct>();
+  auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_compress_struct>(sizeof(jpeg_compress_struct));
   // This struct represents a JPEG error handler.
   //struct jpeg_error_mgr jerr;
-  auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>();
+  auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>(sizeof(jpeg_error_mgr));
   jmp_buf jpeg_jmpbuf;  // recovery point in case of error
 
   // Step 1: allocate and initialize JPEG compression object
@@ -809,7 +809,7 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
   sandbox.free_in_sandbox(p_buffer);
   auto new_buffer = sandbox.malloc_in_sandbox<JOCTET>(sizeof(JOCTET) * bufsize);
  // SetDest(&cinfo, buffer, bufsize, output);
-  auto p_output = sandbox.malloc_in_sandbox<tstring>();
+  auto p_output = sandbox.malloc_in_sandbox<tstring>(sizeof(tstring));
   sandbox.invoke_sandbox_function(SetDest, p_cinfo, new_buffer, bufsize, p_output);
 
   // Step 3: set parameters for compression
@@ -886,7 +886,7 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
   }
 */
   // JSAMPLEs per row in image_buffer
-    auto p_row_pointer = sandbox.malloc_in_sandbox<JSAMPROW>();
+    auto p_row_pointer = sandbox.malloc_in_sandbox<JSAMPROW>(sizeof(JSAMPROW));
 //TODO
 //  std::unique_ptr<JSAMPLE[]> row_temp(
   //    new JSAMPLE[width * cinfo.input_components]);
