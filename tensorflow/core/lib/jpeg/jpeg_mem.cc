@@ -163,6 +163,8 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   // Initialize libjpeg structures to have a memory source
   // Modify the usual jpeg error manager to catch fatal errors.
   JPEGErrors error = JPEGERRORS_OK;
+  struct jpeg_decompress_struct cinfo;
+  struct jpeg_error_mgr jerr;
   auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>(sizeof(jpeg_decompress_struct));
   auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>(sizeof(jpeg_error_mgr));
   jmp_buf jpeg_jmpbuf;
@@ -176,6 +178,7 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   auto callback = sandbox.register_callback(exit_error_callback);
    p_jerr->error_exit = callback;
   if (setjmp(jpeg_jmpbuf)) {
+  //  delete[] tempdata;
     sandbox.free_in_sandbox(p_tempdata);
     return nullptr;
   }
@@ -245,7 +248,7 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
 
   JDIMENSION target_output_width = p_cinfo->output_width.unverified_safe_because("We won't accept these values, but rather ensure we can accomodate any value");
   JDIMENSION target_output_height = p_cinfo->output_height.unverified_safe_because("We won't accept these values, but rather ensure we can accomodate any value");
- // JDIMENSION skipped_scanlines = 0;
+  JDIMENSION skipped_scanlines = 0;
   auto p_skipped_scanlines = sandbox.malloc_in_sandbox<JDIMENSION>(sizeof(JDIMENSION));
   *p_skipped_scanlines = 0;
   
@@ -300,25 +303,24 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   argball->height_ = target_output_height;
   argball->stride_ = stride;
 
-#if !defined(LIBJPEG_TURBO_VERSION)
+  // uint8* dstdata = nullptr;
    uint8* dstdata = nullptr;
+#if !defined(LIBJPEG_TURBO_VERSION)
   //auto p_dstdata = sandbox.malloc_in_sandbox<uint8>();
   if (flags.crop) {
     auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * stride * target_output_height);
-    //dstdata = new JSAMPLE[stride * target_output_height];
+    dstdata = new JSAMPLE[stride * target_output_height];
   } else {
     dstdata = argball->allocate_output_(target_output_width,
                                         target_output_height, components);
-    memcpy(sandbox, p_dstdata, dstdata, components);
+    auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * target_output_width * target_output_height * components);
   }
 #else
-   uint8* dstdata = argball->allocate_output_(target_output_width,
+   dstdata = argball->allocate_output_(target_output_width,
                                             target_output_height, components);
-    auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * stride * target_output_height);
-    memcpy(sandbox, p_dstdata, dstdata, components);
+    auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * target_output_width * target_output_height * components);
 
 #endif
-
   if (p_dstdata == nullptr) {
     sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
     return nullptr;
@@ -358,14 +360,30 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   const int mcu_align_offset =
       (p_cinfo->output_width.UNSAFE_unverified() - target_output_width) * (use_cmyk ? 4 : components);
   auto arr_p_tempdata = sandbox.malloc_in_sandbox<JSAMPLE*>(1 * sizeof(JSAMPLE*));
-  arr_p_tempdata[0] = p_tempdata;
+  *arr_p_tempdata = p_tempdata;
+/*  std::cout << typeid(p_tempdata).name() << std::endl;
+  std::cout << typeid(*arr_p_tempdata).name() << std::endl;
+  arr_p_tempdata[0][0] = 3;
+  arr_p_tempdata[0][1] = 3;
+  arr_p_tempdata[0][2] = 3;
+  arr_p_tempdata[0][3] = 3;
+  std::cout << p_tempdata[0].UNSAFE_unverified() << std::endl;
+  std::cout << p_tempdata[1].UNSAFE_unverified() << std::endl;
+  std::cout << p_tempdata[2].UNSAFE_unverified() << std::endl;
+  std::cout << p_tempdata[3].UNSAFE_unverified() << std::endl;
+  std::cout << arr_p_tempdata[0][0].UNSAFE_unverified() << std::endl;*/
   auto arr_p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE*>(1 * sizeof(JSAMPLE*));
-  arr_p_dstdata[0] = p_dstdata;
+  auto final_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>();
+  final_dstdata = p_dstdata;
   
   while (p_cinfo->output_scanline.UNSAFE_unverified() < max_scanlines_to_read) {
+    *arr_p_dstdata = p_dstdata;
     int num_lines_read = 0;
     if (use_cmyk) {
       num_lines_read = sandbox.invoke_sandbox_function(jpeg_read_scanlines, p_cinfo, arr_p_tempdata, 1).UNSAFE_unverified();
+      for (int i = 0; i < p_cinfo->output_width.UNSAFE_unverified(); i++) {
+          std::cout << p_tempdata[i].UNSAFE_unverified() << std::endl;
+      }
       if (num_lines_read > 0) {
         // Convert CMYK to RGB if scanline read succeeded.
         for (size_t i = 0; i < target_output_width; ++i) {
@@ -402,6 +420,9 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     } else {
       //num_lines_read = jpeg_read_scanlines(&cinfo, &output_line, 1);
       num_lines_read = sandbox.invoke_sandbox_function(jpeg_read_scanlines, p_cinfo, arr_p_dstdata, 1).UNSAFE_unverified();
+      /*for (int i = 0; i < num_lines_read; i++) {
+          std::cout << p_dstdata[i].UNSAFE_unverified() << std::endl;
+      }*/
     }
     
     // Handle error cases
@@ -561,7 +582,6 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
       jpeg_destroy_decompress(&cinfo);
       return nullptr;
     }
-
     const int full_image_stride = stride;
     // Update stride and hight for crop window.
     const int min_stride = target_output_width * components * sizeof(JSAMPLE);
@@ -570,7 +590,6 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     }
     argball->height_ = target_output_height;
     argball->stride_ = stride;
-
     if (argball->height_read_ > target_output_height) {
       argball->height_read_ = target_output_height;
     }
@@ -589,10 +608,21 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
 
 //  jpeg_destroy_decompress(&cinfo); 
   sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
-  sandbox.free_in_sandbox(p_cinfo); 
+  sandbox.free_in_sandbox(p_cinfo);
+  auto end_dstdata = dstdata;
+ /* for (int i = 0; i < argball->height_read_; i++) {
+      std::cout << final_dstdata[i].UNSAFE_unverified() << std::endl;
+  }*/
+  for (int i = 0; i < target_output_width * target_output_height * components; i++) {
+      end_dstdata[i] = final_dstdata[i].UNSAFE_unverified();
+  }
+  /*for (int i = 0; i < argball->height_read_; i++) {
+      std::cout << dstdata[i] << std::endl;
+  }*/
+  //std::copy(end_dstdata, end_dstdata + argball->height_read_, dstdata);
+  sandbox.destroy_sandbox();
   return dstdata;
 }
-
 }  // anonymous namespace
 
 // -----------------------------------------------------------------------------
@@ -620,6 +650,9 @@ uint8* Uncompress(const void* srcdata, int datasize,
     return nullptr;
   }
 
+   for (int i = 0; i < argball.height_read_; i++) {
+        std::cout << dstdata[i] << std::endl;
+    }
   // If there was an error in reading the jpeg data,
   // set the unread pixels to black
   if (argball.height_read_ != argball.height_) {
@@ -652,8 +685,6 @@ uint8* Uncompress(const void* srcdata, int datasize,
 // ----------------------------------------------------------------------------
 // Computes image information from jpeg header.
 // Returns true on success; false on failure.
-
-
 bool GetImageInfo(const void* srcdata, int datasize, int* width, int*  height,
                   int* components) {
 //char* params = reinterpret_cast<char*> srcdata;
@@ -870,13 +901,11 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
     const int metadata_length = flags.xmp_metadata.size();
     const int packet_length = metadata_length + name_space_length + 1;
     std::unique_ptr<JOCTET[]> joctet_packet(new JOCTET[packet_length]);
-
     for (int i = 0; i < name_space_length; i++) {
       // Conversion char --> JOCTET
       joctet_packet[i] = name_space[i];
     }
     joctet_packet[name_space_length] = 0;  // null-terminate namespace string
-
     for (int i = 0; i < metadata_length; i++) {
       // Conversion char --> JOCTET
       joctet_packet[i + name_space_length + 1] = flags.xmp_metadata[i];
