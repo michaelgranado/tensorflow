@@ -139,19 +139,29 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   int components = flags.components;
   int stride = flags.stride;              // may be 0
   int64_t* const nwarn = argball->pnwarn_;  // may be NULL
+  
+  tainted_img<int> tainted_datasize = argball->datasize_;
+  tainted_img<int> tainted_ratio = argball->flags_.ratio;
+  tainted_img<int> tainted_components = argball->flags_.components;
+  tainted_img<int> tainted_stride = argball->flags_.stride;
 
   // Can't decode if the ratio is not recognized by libjpeg
   if ((ratio != 1) && (ratio != 2) && (ratio != 4) && (ratio != 8)) {
+    sandbox.destroy_sandbox();
     return nullptr;
   }
 
   // Channels must be autodetect, grayscale, or rgb.
   if (!(components == 0 || components == 1 || components == 3)) {
+    sandbox.destroy_sandbox();
     return nullptr;
   }
 
   // if empty image, return
-  if (datasize == 0 || srcdata == nullptr) return nullptr;
+  if (datasize == 0 || srcdata == nullptr) {
+      sandbox.destroy_sandbox();
+      return nullptr;
+  }
 
   auto unchecked_srcdata = sandbox.malloc_in_sandbox<unsigned char>(datasize * sizeof(unsigned char));
   memcpy(sandbox, unchecked_srcdata, srcdata, datasize);
@@ -163,8 +173,8 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   // Initialize libjpeg structures to have a memory source
   // Modify the usual jpeg error manager to catch fatal errors.
   JPEGErrors error = JPEGERRORS_OK;
-  struct jpeg_decompress_struct cinfo;
-  struct jpeg_error_mgr jerr;
+  //struct jpeg_decompress_struct cinfo;
+  //struct jpeg_error_mgr jerr;
   auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>(sizeof(jpeg_decompress_struct));
   auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>(sizeof(jpeg_error_mgr));
   jmp_buf jpeg_jmpbuf;
@@ -178,8 +188,10 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   auto callback = sandbox.register_callback(exit_error_callback);
    p_jerr->error_exit = callback;
   if (setjmp(jpeg_jmpbuf)) {
-  //  delete[] tempdata;
     sandbox.free_in_sandbox(p_tempdata);
+    sandbox.free_in_sandbox(p_cinfo);
+    sandbox.free_in_sandbox(p_jerr);
+    sandbox.destroy_sandbox();
     return nullptr;
   }
 
@@ -196,7 +208,7 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   sandbox.invoke_sandbox_function(jpeg_read_header, p_cinfo, TRUE);
 
   // Set components automatically if desired, autoconverting cmyk to rgb.
-  if (components == 0) components = std::min(p_cinfo->num_components.unverified_safe_because("We are just checking integer values"), 3);
+  if (components == 0) components = std::min(p_cinfo->num_components.unverified_safe_because("Values will be checked"), 3);
 
   // set grayscale and ratio parameters
   switch (components) {
@@ -204,8 +216,8 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
       p_cinfo->out_color_space = JCS_GRAYSCALE;
       break;
     case 3:
-      if (p_cinfo->jpeg_color_space.unverified_safe_because("We are error checking")  == JCS_CMYK ||
-          p_cinfo->jpeg_color_space.unverified_safe_because("We are error checking") == JCS_YCCK) {
+      if (p_cinfo->jpeg_color_space.unverified_safe_because("We are checking for 4 channel JPEG")  == JCS_CMYK ||
+          p_cinfo->jpeg_color_space.unverified_safe_because("We are checking for 4 channel JPEG") == JCS_YCCK) {
         // Always use cmyk for output in a 4 channel jpeg. libjpeg has a
         // built-in decoder.  We will further convert to rgb below.
         p_cinfo->out_color_space = JCS_CMYK;
@@ -216,6 +228,10 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
     default:
       LOG(ERROR) << " Invalid components value " << components << std::endl;
       sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
+      sandbox.free_in_sandbox(p_tempdata);
+      sandbox.free_in_sandbox(p_cinfo);
+      sandbox.free_in_sandbox(p_jerr);
+      sandbox.destroy_sandbox();
       return nullptr;
   }
   p_cinfo->do_fancy_upsampling = boolean(flags.fancy_upscaling);
@@ -229,25 +245,48 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   int64_t total_size = static_cast<int64_t>(p_cinfo->output_height.unverified_safe_because("We will error check after")) *
                        static_cast<int64_t>(p_cinfo->output_width.unverified_safe_because("We will error check after")) *
                        static_cast<int64_t>(p_cinfo->num_components.unverified_safe_because("We will error check after"));
+  auto tainted_total_size = (p_cinfo->output_height) * (p_cinfo->output_width) * (p_cinfo->num_components);
   // Some of the internal routines do not gracefully handle ridiculously
   // large images, so fail fast.
   
-  if (p_cinfo->output_width.unverified_safe_because("We are error checking") <= 0 || p_cinfo->output_height.unverified_safe_because("We are error checking") <= 0) {
-    LOG(ERROR) << "Invalid image size: " << p_cinfo->output_width.unverified_safe_because("We are printing error message") << " x "
-               << p_cinfo->output_height.unverified_safe_because("We are printing error message");
+  /*if (p_cinfo->output_width.unverified_safe_because("We are error checking dimensions") <= 0 || 
+          p_cinfo->output_height.unverified_safe_because("We are error checking dimensions") <= 0) {
+    LOG(ERROR) << "Invalid image size: " << p_cinfo->output_width.unverified_safe_because("We are printing error message")
+        << " x " << p_cinfo->output_height.unverified_safe_because("We are printing error message");
     sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
+    sandbox.free_in_sandbox(p_tempdata);
+    sandbox.free_in_sandbox(p_cinfo);
+    sandbox.free_in_sandbox(p_jerr);
+    sandbox.destroy_sandbox();
     return nullptr;
-  }
-  if (total_size >= (1LL << 29)) {
-    LOG(ERROR) << "Image too large: " << total_size;
+  }*/
+  if (tainted_total_size.unverified_safe_because("We check for an image loo large") >= (1LL << 29)) {
+    LOG(ERROR) << "Image too large: " << tainted_total_size.unverified_safe_because("We are logging the error");
     sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
+    sandbox.free_in_sandbox(p_tempdata);
+    sandbox.free_in_sandbox(p_cinfo);
+    sandbox.free_in_sandbox(p_jerr);
+    sandbox.destroy_sandbox();
     return nullptr;
   }
 
   sandbox.invoke_sandbox_function(jpeg_start_decompress, p_cinfo);
 
-  JDIMENSION target_output_width = p_cinfo->output_width.unverified_safe_because("We won't accept these values, but rather ensure we can accomodate any value");
-  JDIMENSION target_output_height = p_cinfo->output_height.unverified_safe_because("We won't accept these values, but rather ensure we can accomodate any value");
+ // JDIMENSION target_output_width = p_cinfo->output_width.unverified_safe_because("We won't accept these values, but rather ensure we can accomodate any value");
+ // JDIMENSION target_output_height = p_cinfo->output_height.unverified_safe_because("We won't accept these values, but rather ensure we can accomodate any value");
+  JDIMENSION target_output_width = p_cinfo->output_width.copy_and_verify([](JDIMENSION width) {
+          if(width >0) {
+            return width;
+          }
+          LOG(ERROR) << "Invalid image width: " << width;
+          });
+  JDIMENSION target_output_height = p_cinfo->output_height.copy_and_verify([](JDIMENSION height) {
+          if(height >0) {
+            return height;
+          }
+          LOG(ERROR) << "Invalid image height: " << height;
+          });
+
   JDIMENSION skipped_scanlines = 0;
   auto p_skipped_scanlines = sandbox.malloc_in_sandbox<JDIMENSION>(sizeof(JDIMENSION));
   *p_skipped_scanlines = 0;
@@ -529,6 +568,7 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
       return nullptr;
   }
 
+  auto tainted_nwarn = sandbox.malloc_in_sandbox<int64_t>();
   // save number of warnings if requested
   if (nwarn != nullptr) {
     *nwarn = p_cinfo->err->num_warnings.UNSAFE_unverified();
