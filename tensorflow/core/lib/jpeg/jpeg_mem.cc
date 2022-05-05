@@ -613,8 +613,12 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
  /* for (int i = 0; i < argball->height_read_; i++) {
       std::cout << final_dstdata[i].UNSAFE_unverified() << std::endl;
   }*/
+  size_t buf_size = target_output_width * target_output_height * components;
+  auto dest = final_dstdata.copy_and_verify_range([&buf_size, &target_output_width, &target_output_height, &components](std::unique_ptr<unsigned char[]> buf) {
+          return buf_size == (target_output_width * target_output_height * components) ? std::move(buf) : nullptr;
+          }, buf_size);
   for (int i = 0; i < target_output_width * target_output_height * components; i++) {
-      end_dstdata[i] = final_dstdata[i].UNSAFE_unverified();
+      end_dstdata[i] = dest[i];
   }
   /*for (int i = 0; i < argball->height_read_; i++) {
       std::cout << dstdata[i] << std::endl;
