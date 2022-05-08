@@ -78,10 +78,10 @@ void MemTermDestination(j_compress_ptr cinfo) {
 }
 
 // -----------------------------------------------------------------------------
-void SetDest(j_compress_ptr cinfo, void *buffer, int bufsize) {
+/*void SetDest(j_compress_ptr cinfo, void *buffer, int bufsize) {
   SetDest(cinfo, buffer, bufsize, nullptr);
 }
-
+*/
 // -----------------------------------------------------------------------------
 void SetDest(j_compress_ptr cinfo, void *buffer, int bufsize,
              tstring *destination) {

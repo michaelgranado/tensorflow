@@ -48,7 +48,7 @@ void SetSrc(j_decompress_ptr cinfo, const void *data,
 
 // JPEG destination: we will store all the data in a buffer "buffer" of total
 // size "bufsize", if the buffer overflows, we will be in trouble.
-void SetDest(j_compress_ptr cinfo, void *buffer, int bufsize);
+//void SetDest(j_compress_ptr cinfo, void *buffer, int bufsize);
 // Same as above, except that buffer is only used as a temporary structure and
 // is emptied into "destination" as soon as it fills up.
 void SetDest(j_compress_ptr cinfo, void *buffer, int bufsize,

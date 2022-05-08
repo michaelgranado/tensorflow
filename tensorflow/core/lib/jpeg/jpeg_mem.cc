@@ -19,8 +19,8 @@ limitations under the License.
 #define RLBOX_SINGLE_THREADED_INVOCATIONS
 #define RLBOX_USE_STATIC_CALLS() rlbox_noop_sandbox_lookup_symbol
 
-#include "rlbox.hpp"
-#include "rlbox_noop_sandbox.hpp"
+#include "RLBOX/rlbox.hpp"
+#include "RLBOX/rlbox_noop_sandbox.hpp"
 
 #include "tensorflow/core/lib/jpeg/jpeg_mem.h"
 
