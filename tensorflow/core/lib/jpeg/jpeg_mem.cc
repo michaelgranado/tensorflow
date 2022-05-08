@@ -578,68 +578,75 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
       LOG(ERROR) << "Unhandled case " << error;
       break;
   }
-/*
+
 #if !defined(LIBJPEG_TURBO_VERSION)
   // TODO(tanmingxing): delete all these code after migrating to libjpeg_turbo
   // for Windows.
   if (flags.crop) {
-    // Update target output height and width based on crop window.
-    target_output_height = flags.crop_height;
-    target_output_width = flags.crop_width;
-
-    // cinfo holds the original input image information.
-    if (!IsCropWindowValid(flags, p_cinfo->output_width.UNSAFE_unverified(), p_cinfo->output_height.UNSAFE_unverified())) {
+      // Update target output height and width based on crop window.
+      target_output_height = flags.crop_height;
+      target_output_width = flags.crop_width;
+      if (!IsCropWindowValid(flags, p_cinfo->output_width.unverified_safe_because("Crop width will still be moved to sandbox after"), 
+              p_cinfo->output_height.unverified_safe_because("Crop Height will still be moved to sandbox after"))) {
       LOG(ERROR) << "Invalid crop window: x=" << flags.crop_x
                  << ", y=" << flags.crop_y << ", w=" << target_output_width
                  << ", h=" << target_output_height
-                 << " for image_width: " << p_cinfo->output_width.UNSAFE_unverified()
-                 << " and image_height: " << p_cinfo->output_height.UNSAFE_unverified();
-      //delete[] dstdata;
-      sandbox.free_in_sandbox(p_dstdata);
-      //jpeg_destroy_decompress(&cinfo);
+                 << " for image_width: " << p_cinfo->output_width.unverified_safe_because("Printing Crop Size Error")
+                 << " and image_height: " << p_cinfo->output_height.unverified_safe_because("Printing Crop Size Error");
       sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
+      sandbox.free_in_sandbox(p_tempdata);
       sandbox.free_in_sandbox(p_cinfo);
+      sandbox.free_in_sandbox(p_jerr);
+      sandbox.destroy_sandbox();
       return nullptr;
     }
-*TODO
-    const uint8* full_image = dstdata;
     dstdata = argball->allocate_output_(target_output_width,
                                         target_output_height, components);
-    if (dstdata == nullptr) {
-      delete[] full_image;
-      jpeg_destroy_decompress(&cinfo);
+    auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * target_output_width * target_output_height * components);
+    auto tainted_output_read_buffer = p_dstdata;
+    if (dstdata == nullptr || p_dst_data == nullptr) {
+      delete[] dstdata;
+      sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
+      sandbox.free_in_sandbox(p_tempdata);
+      sandbox.free_in_sandbox(p_cinfo);
+      sandbox.free_in_sandbox(p_jerr);
+      sandbox.destroy_sandbox();
       return nullptr;
     }
-    const int full_image_stride = stride;
     // Update stride and hight for crop window.
     const int min_stride = target_output_width * components * sizeof(JSAMPLE);
-    if (flags.stride == 0) {
+    if (stride == 0) {
       stride = min_stride;
+    } else if (stride < min_stride) {
+      LOG(ERROR) << "Incompatible stride: " << stride << " < " << min_stride;
+      sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
+      sandbox.free_in_sandbox(p_tempdata);
+      sandbox.free_in_sandbox(p_cinfo);
+      sandbox.free_in_sandbox(p_jerr);
+      sandbox.destroy_sandbox();
+      return nullptr;
     }
+
+    // Remember stride and height for use in Uncompress
     argball->height_ = target_output_height;
     argball->stride_ = stride;
     if (argball->height_read_ > target_output_height) {
       argball->height_read_ = target_output_height;
     }
     const int crop_offset = flags.crop_x * components * sizeof(JSAMPLE);
-    const uint8* full_image_ptr = full_image + flags.crop_y * full_image_stride;
-    uint8* crop_image_ptr = dstdata;
+    auto full_image_ptr = p_dstdata + flags.crop_y * full_image_stride;
+    auto crop_image_ptr = p_dstdata
     for (int i = 0; i < argball->height_read_; i++) {
-      memcpy(crop_image_ptr, full_image_ptr + crop_offset, min_stride);
+      memcpy(sandbox, crop_image_ptr, full_image_ptr + crop_offset, min_stride);
       crop_image_ptr += stride;
       full_image_ptr += full_image_stride;
     }
-    delete[] full_image;
   }
   
 #endif
-*/
+
   sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
   auto end_dstdata = dstdata;
- // size_t buf_size = target_output_width * target_output_height * components;
- // for(int i = 0; i < buf_size; i++) {
-  //    std::cout << final_dst[i].UNSAFE_unverified() << std::endl;
- // }
   size_t buf_size = target_output_width * target_output_height * components; 
   auto dest = tainted_output_read_buffer.copy_and_verify_range([&buf_size, &target_output_width, &target_output_height, &components](std::unique_ptr<unsigned char[]> buf) {
           return buf_size == (target_output_width * target_output_height * components) ? std::move(buf) : nullptr;
