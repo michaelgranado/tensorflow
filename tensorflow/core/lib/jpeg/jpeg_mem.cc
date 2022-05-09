@@ -318,24 +318,26 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
    uint8* dstdata = nullptr;
 #if !defined(LIBJPEG_TURBO_VERSION)
   if (flags.crop) {
+    auto buf_size = stride * target_output_height;
     dstdata = new JSAMPLE[stride * target_output_height];
     auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * stride * target_output_height);
   } else {
-    dstdata = argball->allocate_output_(target_output_width,
-                                        target_output_height, components);
+    auto buf_size = target_output_width * target_output_height * components;
+    dstdata = argball->allocate_output_(target_output_width,target_output_height, components);
     auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * target_output_width * target_output_height * components);
   }
 #else
-   dstdata = argball->allocate_output_(target_output_width,
-                                            target_output_height, components);
+    auto buf_size = target_output_width * target_output_height * components;
+    dstdata = argball->allocate_output_(target_output_width, target_output_height, components);
     auto p_dstdata = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * target_output_width * target_output_height * components);
 #endif
-  if (p_dstdata == nullptr) {
+  if (p_dstdata == nullptr || dstdata == nullptr) {
     sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
     sandbox.free_in_sandbox(p_tempdata);
     sandbox.free_in_sandbox(p_cinfo);
     sandbox.free_in_sandbox(p_jerr);
     sandbox.destroy_sandbox();
+    delete[] dstdata;
     return nullptr;
   }
 
@@ -647,12 +649,23 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
 
   sandbox.invoke_sandbox_function(jpeg_destroy_decompress, p_cinfo);
   auto end_dstdata = dstdata;
-  size_t buf_size = target_output_width * target_output_height * components; 
-  auto dest = tainted_output_read_buffer.copy_and_verify_range([&buf_size, &target_output_width, &target_output_height, &components](std::unique_ptr<unsigned char[]> buf) {
-          return buf_size == (target_output_width * target_output_height * components) ? std::move(buf) : nullptr;
-          }, buf_size);
-  for (int i = 0; i < target_output_width * target_output_height * components; i++) {
-      end_dstdata[i] = dest[i];
+  if(flags.crop) {
+    auto dest = tainted_output_read_buffer.copy_and_verify_range([&buf_size, &target_output_height, 
+            &stride](std::unique_ptr<unsigned char[]> buf) {
+            return buf_size == (target_output_height * stride) ? std::move(buf) : nullptr;
+            }, buf_size);
+    for (int i = 0; i < target_output_height * stride; i++) {
+        end_dstdata[i] = dest[i];
+    }
+  }
+  else{
+    auto dest = tainted_output_read_buffer.copy_and_verify_range([&buf_size, &target_output_width, 
+            &target_output_height, &components](std::unique_ptr<unsigned char[]> buf) {
+            return buf_size == (target_output_width * target_output_height * components) ? std::move(buf) : nullptr;
+            }, buf_size);
+    for (int i = 0; i < target_output_width * target_output_height * components; i++) {
+        end_dstdata[i] = dest[i];
+    }
   }
   sandbox.free_in_sandbox(p_cinfo);
   sandbox.free_in_sandbox(p_jerr);
