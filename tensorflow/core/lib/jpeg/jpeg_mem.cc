@@ -887,10 +887,11 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
   int bufsize = std::min(width * height * components, 1 << 20);
   //buffer = new JOCTET[bufsize];
   sandbox.free_in_sandbox(p_buffer);
-  auto new_buffer = sandbox.malloc_in_sandbox<JOCTET>(sizeof(JOCTET) * bufsize);
+  p_buffer = sandbox.malloc_in_sandbox<JOCTET>(sizeof(JOCTET) * bufsize);
  // SetDest(&cinfo, buffer, bufsize, output);
   auto p_output = sandbox.malloc_in_sandbox<tstring>(sizeof(tstring));
-  sandbox.invoke_sandbox_function(SetDest, p_cinfo, new_buffer, bufsize, p_output);
+  sandbox.free_in_sandbox(p_output);
+  sandbox.invoke_sandbox_function(SetDest, p_cinfo, p_buffer, bufsize, p_output);
 
   // Step 3: set parameters for compression
   p_cinfo->image_width = width;
@@ -908,7 +909,8 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
     default:
       LOG(ERROR) << " Invalid components value " << components << std::endl;
       output->clear();
-      sandbox.free_in_sandbox(new_buffer);
+      sandbox.free_in_sandbox(p_output);
+      sandbox.free_in_sandbox(p_buffer);
       //delete[] buffer;
       return false;
   }
@@ -928,19 +930,19 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
    // jpeg_simple_progression(&cinfo);
   sandbox.invoke_sandbox_function(jpeg_simple_progression, p_cinfo);
   }
-/*TODO
+
   if (!flags.chroma_downsampling) {
     // Turn off chroma subsampling (it is on by default).  For more details on
     // chroma subsampling, see http://en.wikipedia.org/wiki/Chroma_subsampling.
     for (int i = 0; i < p_cinfo->num_components.UNSAFE_unverified(); ++i) {
-      p_cinfo->comp_info[i].h_samp_factor = 1;
-      p_cinfo->comp_info[i].v_samp_factor = 1;
+      (p_cinfo.UNSAFE_unverified())->comp_info[i].h_samp_factor = 1;
+      (p_cinfo.UNSAFE_unverified())->comp_info[i].v_samp_factor = 1;
     }
   }
-*/
+
  // jpeg_start_compress(&cinfo, TRUE);
   sandbox.invoke_sandbox_function(jpeg_start_compress, p_cinfo, TRUE);
-/*TODO
+
   // Embed XMP metadata if any
   if (!flags.xmp_metadata.empty()) {
     // XMP metadata is embedded in the APP1 tag of JPEG and requires this
@@ -949,32 +951,35 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
     const int name_space_length = name_space.size();
     const int metadata_length = flags.xmp_metadata.size();
     const int packet_length = metadata_length + name_space_length + 1;
-    std::unique_ptr<JOCTET[]> joctet_packet(new JOCTET[packet_length]);
+   // std::unique_ptr<JOCTET[]> joctet_packet(new JOCTET[packet_length]);
+    auto p_joctet_packet = sandbox.malloc_in_sandbox<JOCTET>(sizeof(JOCTET) * packet_length);
     for (int i = 0; i < name_space_length; i++) {
       // Conversion char --> JOCTET
-      joctet_packet[i] = name_space[i];
+      p_joctet_packet[i] = name_space[i];
     }
-    joctet_packet[name_space_length] = 0;  // null-terminate namespace string
+    p_joctet_packet[name_space_length] = 0;  // null-terminate namespace string
     for (int i = 0; i < metadata_length; i++) {
       // Conversion char --> JOCTET
-      joctet_packet[i + name_space_length + 1] = flags.xmp_metadata[i];
+      p_joctet_packet[i + name_space_length + 1] = flags.xmp_metadata[i];
     }
-    jpeg_write_marker(&cinfo, JPEG_APP0 + 1, joctet_packet.get(),
-                      packet_length);
+    //jpeg_write_marker(&cinfo, JPEG_APP0 + 1, joctet_packet.get(),
+                   //   packet_length);
+    sandbox.invoke_sandbox_function(jpeg_write_marker, p_cinfo, JPEG_APP0 + 1, p_joctet_packet, packet_length);
   }
-*/
+
   // JSAMPLEs per row in image_buffer
-    auto p_row_pointer = sandbox.malloc_in_sandbox<JSAMPROW>(sizeof(JSAMPROW));
-//TODO
+    auto p_row_pointer = sandbox.malloc_in_sandbox<JSAMPLE*>(1 * sizeof(JSAMPLE*));
 //  std::unique_ptr<JSAMPLE[]> row_temp(
   //    new JSAMPLE[width * cinfo.input_components]);
   auto row_temp = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * width * p_cinfo->input_components.UNSAFE_unverified());
   while (p_cinfo->next_scanline.UNSAFE_unverified() < p_cinfo->image_height.UNSAFE_unverified()) {
     //JSAMPROW row_pointer[1];  // pointer to JSAMPLE row[s]
-    p_row_pointer[0].assign_raw_pointer(sandbox, reinterpret_cast<JSAMPLE*>(const_cast<JSAMPLE*>(&srcdata[p_cinfo->next_scanline.UNSAFE_unverified() * in_stride])));
-    /*TODO, format of RGBA and ABGR
+  //  p_row_pointer[0].assign_raw_pointer(sandbox, reinterpret_cast<JSAMPLE*>(const_cast<JSAMPLE*>(&srcdata[p_cinfo->next_scanline.UNSAFE_unverified() * in_stride])));
+    // *p_r = &(srcdata[p_cinfo->next_scanline.UNSAFE_unverified() * in_stride]);
+      auto r = srcdata + (p_cinfo->next_scanline.UNSAFE_unverified() * in_stride);
    // const uint8* r = &srcdata[cinfo.next_scanline * in_stride];
  //   uint8* p = static_cast<uint8*>(row_temp.get());
+    auto p = row_temp;
     switch (flags.format) {
       case FORMAT_RGBA: {
         for (int i = 0; i < width; ++i, p += 3, r += 4) {
@@ -982,7 +987,7 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
           p[1] = r[1];
           p[2] = r[2];
         }
-        row_pointer[0] = row_temp.get();
+        p_row_pointer[0] = row_temp;
         break;
       }
       case FORMAT_ABGR: {
@@ -991,15 +996,16 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
           p[1] = r[2];
           p[2] = r[1];
         }
-        row_pointer[0] = row_temp.get();
+        p_row_pointer[0] = row_temp;
         break;
       }
       default: {
-        row_pointer[0] = reinterpret_cast<JSAMPLE*>(const_cast<JSAMPLE*>(r));
+        //row_pointer[0] = reinterpret_cast<JSAMPLE*>(const_cast<JSAMPLE*>(r));
+        p_row_pointer[0].assign_raw_pointer(sandbox, reinterpret_cast<JSAMPLE*>(const_cast<JSAMPLE*>(r)));
       }
-    }*/
+    }
     CHECK_EQ(sandbox.invoke_sandbox_function(jpeg_write_scanlines, p_cinfo, (p_row_pointer), 1).UNSAFE_unverified(), 1u);
-  //  CHECK_EQ(jpeg_write_scanlines(&cinfo, row_pointer, 1), 1u);
+//    CHECK_EQ(jpeg_write_scanlines(&cinfo, row_pointer, 1), 1u);
   }
   
   //jpeg_finish_compress(&cinfo);
@@ -1009,7 +1015,7 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
  // jpeg_destroy_compress(&cinfo);
   sandbox.invoke_sandbox_function(jpeg_destroy_compress, p_cinfo);
  // delete[] buffer;
-  sandbox.free_in_sandbox(new_buffer);
+  sandbox.free_in_sandbox(p_buffer);
   return true;
 }
 
