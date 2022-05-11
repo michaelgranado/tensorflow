@@ -843,8 +843,8 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
     return false;
   }
 
- // JOCTET* buffer = nullptr;
- auto p_buffer = sandbox.malloc_in_sandbox<JOCTET>(sizeof(JOCTET));
+  JOCTET* buffer = nullptr;
+  auto p_buffer = sandbox.malloc_in_sandbox<JOCTET>(sizeof(JOCTET));
 
   // NOTE: for broader use xmp_metadata should be made a Unicode string
   CHECK(srcdata != nullptr);
@@ -866,11 +866,11 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
   p_cinfo->client_data.assign_raw_pointer(sandbox, &jpeg_jmpbuf);
   //jerr.error_exit = CatchError;
   auto callback = sandbox.register_callback(exit_error_callback);
-   p_jerr->error_exit = callback;
+  p_jerr->error_exit = callback;
 
   if (setjmp(jpeg_jmpbuf)) {
     output->clear();
-    //delete[] buffer;
+    delete[] buffer;
     sandbox.free_in_sandbox(p_buffer);
     return false;
   }
@@ -878,21 +878,22 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
  // jpeg_create_compress(&cinfo);
   //sandbox.invoke_sandbox_function(sandbox, jpeg_create_compress, p_cinfo);
   sandbox.invoke_sandbox_function(jpeg_CreateCompress, p_cinfo, JPEG_LIB_VERSION, (size_t) sizeof(struct jpeg_compress_struct));
-
+    
   // Step 2: specify data destination
   // We allocate a buffer of reasonable size. If we have a small image, just
   // estimate the size of the output using the number of bytes of the input.
   // If this is getting too big, we will append to the string by chunks of 1MB.
   // This seems like a reasonable compromise between performance and memory.
   int bufsize = std::min(width * height * components, 1 << 20);
-  //buffer = new JOCTET[bufsize];
+  buffer = new JOCTET[bufsize];
   sandbox.free_in_sandbox(p_buffer);
   p_buffer = sandbox.malloc_in_sandbox<JOCTET>(sizeof(JOCTET) * bufsize);
- // SetDest(&cinfo, buffer, bufsize, output);
-  auto p_output = sandbox.malloc_in_sandbox<tstring>(sizeof(tstring));
-  sandbox.free_in_sandbox(p_output);
+  tainted_img<tstring*> p_output;
+  p_output.assign_raw_pointer(sandbox, output);
+  // SetDest(&cinfo, buffer, bufsize, output);
+ // auto p_output = sandbox.malloc_in_sandbox<tstring>(sizeof(tstring));
+  //sandbox.free_in_sandbox(p_output);
   sandbox.invoke_sandbox_function(SetDest, p_cinfo, p_buffer, bufsize, p_output);
-
   // Step 3: set parameters for compression
   p_cinfo->image_width = width;
   p_cinfo->image_height = height;
@@ -1020,7 +1021,6 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
 }
 
 }  // anonymous namespace
-
 // -----------------------------------------------------------------------------
 
 bool Compress(const void* srcdata, int width, int height,
