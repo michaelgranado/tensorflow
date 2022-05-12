@@ -19,8 +19,12 @@ limitations under the License.
 #define RLBOX_SINGLE_THREADED_INVOCATIONS
 #define RLBOX_USE_STATIC_CALLS() rlbox_noop_sandbox_lookup_symbol
 
-#include "RLBOX/rlbox.hpp"
 #include "RLBOX/rlbox_noop_sandbox.hpp"
+
+using sandbox_type_t = rlbox::rlbox_noop_sandbox;
+
+#include "RLBOX/rlbox.hpp"
+using namespace rlbox;
 
 #include "tensorflow/core/lib/jpeg/jpeg_mem.h"
 
@@ -37,13 +41,10 @@ limitations under the License.
 #include "tensorflow/core/platform/mem.h"
 #include "tensorflow/core/platform/types.h"
 
-#include "lib_struct_file.h"
-
-using namespace rlbox;
-using sandbox_type_t = rlbox::rlbox_noop_sandbox;
-
 template<typename T>
 using tainted_img = rlbox::tainted<T, sandbox_type_t>;
+
+#include "lib_struct_file.h"
 
 rlbox_load_structs_from_library(jpeglib);
 
@@ -106,16 +107,22 @@ void no_print(j_common_ptr cinfo) {}
 
 // Callback function for error exit
 void exit_error_callback(rlbox_sandbox<sandbox_type_t> &sandbox, tainted_img<j_common_ptr> p_cinfo) {
-
-  auto cinfo = p_cinfo.UNSAFE_unverified();
+  
+  auto sandbox_mem_loc = sandbox.malloc_in_sandbox<jmp_buf*>(sizeof(jmp_buf));
+  *sandbox_mem_loc = p_cinfo->client_data;
+  tainted_img<jmp_buf*> app_ptr_tainted_reread = *sandbox_mem_loc;
+  jmp_buf* jpeg_jmpbuf = sandbox.lookup_app_ptr(app_ptr_tainted_reread);
+  //auto cinfo = p_cinfo.UNSAFE_unverified();
   // Seems dangerous, like an abritrary reader
  // (*cinfo->err->output_message)(cinfo);
  
-  jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(cinfo->client_data);
-  jpeg_destroy(cinfo);
+ // jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(cinfo->client_data);
+ // jpeg_destroy(cinfo);
+  sandbox.invoke_sandbox_function(jpeg_destroy, p_cinfo);
 
   // Return Control to the setjmp point
   longjmp(*jpeg_jmpbuf, 1);
+  sandbox.free_in_sandbox(sandbox_mem_loc);
 }
 uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
 
@@ -159,16 +166,24 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   auto p_cinfo = sandbox.malloc_in_sandbox<jpeg_decompress_struct>(sizeof(jpeg_decompress_struct));
   auto p_jerr = sandbox.malloc_in_sandbox<jpeg_error_mgr>(sizeof(jpeg_error_mgr));
   jmp_buf jpeg_jmpbuf;
-
+ // jmp_buf* ptr = (jmp_buf*)malloc(sizeof(jmp_buf));
+  auto sandbox_mem_loc = sandbox.malloc_in_sandbox<jmp_buf*>(sizeof(jmp_buf));
   p_cinfo->err  = sandbox.invoke_sandbox_function(jpeg_std_error, p_jerr);
 #ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
   jerr->output_message = no_print;
 #endif
+  app_pointer<jmp_buf*, sandbox_type_t> app_ptr = sandbox.get_app_pointer(&jpeg_jmpbuf);
+  tainted_img<jmp_buf*> app_ptr_tainted = app_ptr.to_tainted();
+ // p_cinfo->client_data = app_ptr_tainted;
   // Override JPEG error exit using jmp_buf
-  p_cinfo->client_data.assign_raw_pointer(sandbox, &jpeg_jmpbuf);
+ // p_cinfo->client_data.assign_raw_pointer(sandbox, &jpeg_jmpbuf);
+  p_cinfo->client_data = app_ptr_tainted;
   auto callback = sandbox.register_callback(exit_error_callback);
-   p_jerr->error_exit = callback;
-  if (setjmp(jpeg_jmpbuf)) {
+  p_jerr->error_exit = callback;
+  *sandbox_mem_loc = app_ptr_tainted;
+  tainted_img<jmp_buf*> app_ptr_tainted_reread = *sandbox_mem_loc;
+  jmp_buf* original_jpeg_jmpbuf = sandbox.lookup_app_ptr(app_ptr_tainted_reread);
+  if (setjmp(*original_jpeg_jmpbuf)) {
     sandbox.free_in_sandbox(p_tempdata);
     sandbox.free_in_sandbox(p_cinfo);
     sandbox.free_in_sandbox(p_jerr);
@@ -669,6 +684,7 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   }
   sandbox.free_in_sandbox(p_cinfo);
   sandbox.free_in_sandbox(p_jerr);
+  callback.unregister();
   sandbox.destroy_sandbox();
   return dstdata;
 }
@@ -843,7 +859,6 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
     return false;
   }
 
-  JOCTET* buffer = nullptr;
   auto p_buffer = sandbox.malloc_in_sandbox<JOCTET>(sizeof(JOCTET));
 
   // NOTE: for broader use xmp_metadata should be made a Unicode string
@@ -860,23 +875,17 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
 
   // Step 1: allocate and initialize JPEG compression object
   // Use the usual jpeg error manager.
- // cinfo.err = jpeg_std_error(&jerr);
   p_cinfo->err  = sandbox.invoke_sandbox_function(jpeg_std_error, p_jerr);
-  //cinfo.client_data = &jpeg_jmpbuf;
   p_cinfo->client_data.assign_raw_pointer(sandbox, &jpeg_jmpbuf);
-  //jerr.error_exit = CatchError;
   auto callback = sandbox.register_callback(exit_error_callback);
   p_jerr->error_exit = callback;
 
   if (setjmp(jpeg_jmpbuf)) {
     output->clear();
-    delete[] buffer;
     sandbox.free_in_sandbox(p_buffer);
     return false;
   }
 
- // jpeg_create_compress(&cinfo);
-  //sandbox.invoke_sandbox_function(sandbox, jpeg_create_compress, p_cinfo);
   sandbox.invoke_sandbox_function(jpeg_CreateCompress, p_cinfo, JPEG_LIB_VERSION, (size_t) sizeof(struct jpeg_compress_struct));
     
   // Step 2: specify data destination
@@ -885,15 +894,12 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
   // If this is getting too big, we will append to the string by chunks of 1MB.
   // This seems like a reasonable compromise between performance and memory.
   int bufsize = std::min(width * height * components, 1 << 20);
-  buffer = new JOCTET[bufsize];
   sandbox.free_in_sandbox(p_buffer);
   p_buffer = sandbox.malloc_in_sandbox<JOCTET>(sizeof(JOCTET) * bufsize);
   tainted_img<tstring*> p_output;
   p_output.assign_raw_pointer(sandbox, output);
-  // SetDest(&cinfo, buffer, bufsize, output);
- // auto p_output = sandbox.malloc_in_sandbox<tstring>(sizeof(tstring));
-  //sandbox.free_in_sandbox(p_output);
   sandbox.invoke_sandbox_function(SetDest, p_cinfo, p_buffer, bufsize, p_output);
+
   // Step 3: set parameters for compression
   p_cinfo->image_width = width;
   p_cinfo->image_height = height;
@@ -912,23 +918,19 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
       output->clear();
       sandbox.free_in_sandbox(p_output);
       sandbox.free_in_sandbox(p_buffer);
-      //delete[] buffer;
       return false;
   }
   
-//  jpeg_set_defaults(&cinfo);
   sandbox.invoke_sandbox_function(jpeg_set_defaults, p_cinfo); 
   if (flags.optimize_jpeg_size) p_cinfo->optimize_coding = TRUE;
 
   p_cinfo->density_unit = flags.density_unit;  // JFIF code for pixel size units:
-                                            // 1 = in, 2 = cm
+                                               // 1 = in, 2 = cm
   p_cinfo->X_density = flags.x_density;        // Horizontal pixel density
   p_cinfo->Y_density = flags.y_density;        // Vertical pixel density
- // jpeg_set_quality(&cinfo, flags.quality, TRUE);
   sandbox.invoke_sandbox_function(jpeg_set_quality, p_cinfo, flags.quality, TRUE /* limit to baseline-JPEG values */);
 
   if (flags.progressive) {
-   // jpeg_simple_progression(&cinfo);
   sandbox.invoke_sandbox_function(jpeg_simple_progression, p_cinfo);
   }
 
@@ -941,7 +943,6 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
     }
   }
 
- // jpeg_start_compress(&cinfo, TRUE);
   sandbox.invoke_sandbox_function(jpeg_start_compress, p_cinfo, TRUE);
 
   // Embed XMP metadata if any
@@ -952,7 +953,6 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
     const int name_space_length = name_space.size();
     const int metadata_length = flags.xmp_metadata.size();
     const int packet_length = metadata_length + name_space_length + 1;
-   // std::unique_ptr<JOCTET[]> joctet_packet(new JOCTET[packet_length]);
     auto p_joctet_packet = sandbox.malloc_in_sandbox<JOCTET>(sizeof(JOCTET) * packet_length);
     for (int i = 0; i < name_space_length; i++) {
       // Conversion char --> JOCTET
@@ -963,23 +963,14 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
       // Conversion char --> JOCTET
       p_joctet_packet[i + name_space_length + 1] = flags.xmp_metadata[i];
     }
-    //jpeg_write_marker(&cinfo, JPEG_APP0 + 1, joctet_packet.get(),
-                   //   packet_length);
     sandbox.invoke_sandbox_function(jpeg_write_marker, p_cinfo, JPEG_APP0 + 1, p_joctet_packet, packet_length);
   }
 
   // JSAMPLEs per row in image_buffer
-    auto p_row_pointer = sandbox.malloc_in_sandbox<JSAMPLE*>(1 * sizeof(JSAMPLE*));
-//  std::unique_ptr<JSAMPLE[]> row_temp(
-  //    new JSAMPLE[width * cinfo.input_components]);
+  auto p_row_pointer = sandbox.malloc_in_sandbox<JSAMPLE*>(1 * sizeof(JSAMPLE*));
   auto row_temp = sandbox.malloc_in_sandbox<JSAMPLE>(sizeof(JSAMPLE) * width * p_cinfo->input_components.UNSAFE_unverified());
   while (p_cinfo->next_scanline.UNSAFE_unverified() < p_cinfo->image_height.UNSAFE_unverified()) {
-    //JSAMPROW row_pointer[1];  // pointer to JSAMPLE row[s]
-  //  p_row_pointer[0].assign_raw_pointer(sandbox, reinterpret_cast<JSAMPLE*>(const_cast<JSAMPLE*>(&srcdata[p_cinfo->next_scanline.UNSAFE_unverified() * in_stride])));
-    // *p_r = &(srcdata[p_cinfo->next_scanline.UNSAFE_unverified() * in_stride]);
-      auto r = srcdata + (p_cinfo->next_scanline.UNSAFE_unverified() * in_stride);
-   // const uint8* r = &srcdata[cinfo.next_scanline * in_stride];
- //   uint8* p = static_cast<uint8*>(row_temp.get());
+    auto r = srcdata + (p_cinfo->next_scanline.UNSAFE_unverified() * in_stride);
     auto p = row_temp;
     switch (flags.format) {
       case FORMAT_RGBA: {
@@ -1001,21 +992,16 @@ bool CompressInternal(const uint8* srcdata, int width, int height,
         break;
       }
       default: {
-        //row_pointer[0] = reinterpret_cast<JSAMPLE*>(const_cast<JSAMPLE*>(r));
         p_row_pointer[0].assign_raw_pointer(sandbox, reinterpret_cast<JSAMPLE*>(const_cast<JSAMPLE*>(r)));
       }
     }
     CHECK_EQ(sandbox.invoke_sandbox_function(jpeg_write_scanlines, p_cinfo, (p_row_pointer), 1).UNSAFE_unverified(), 1u);
-//    CHECK_EQ(jpeg_write_scanlines(&cinfo, row_pointer, 1), 1u);
   }
   
-  //jpeg_finish_compress(&cinfo);
   sandbox.invoke_sandbox_function(jpeg_finish_compress, p_cinfo);
 
   // release JPEG compression object
- // jpeg_destroy_compress(&cinfo);
   sandbox.invoke_sandbox_function(jpeg_destroy_compress, p_cinfo);
- // delete[] buffer;
   sandbox.free_in_sandbox(p_buffer);
   return true;
 }

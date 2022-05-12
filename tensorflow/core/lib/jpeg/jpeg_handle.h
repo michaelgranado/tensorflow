@@ -43,7 +43,7 @@ typedef struct {
   bool try_recover_truncated_jpeg;
 } MemSourceMgr;
 
-void SetSrc(j_decompress_ptr cinfo, const void *data,
+extern "C" void SetSrc(j_decompress_ptr cinfo, const void *data,
             unsigned long int datasize, bool try_recover_truncated_jpeg);
 
 // JPEG destination: we will store all the data in a buffer "buffer" of total
