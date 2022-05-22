@@ -22,6 +22,15 @@ package(
 cc_library(
     name = "jpeg_internal",
     srcs = [
+        "jpeg_handle.cc",
+        "jpeg_handle2.cc",
+        "jpeg_mem.cc",
+        "//tensorflow/core/platform:jpeg_hdrs",
+    ],
+    hdrs = [
+        "jpeg_handle.h",
+        "jpeg_handle2.h",
+        "jpeg_mem.h",
         "RLBOX/rlbox.hpp",
         "RLBOX/rlbox_app_pointer.hpp",
         "RLBOX/rlbox_conversion.hpp",
@@ -38,13 +47,8 @@ cc_library(
         "RLBOX/rlbox_types.hpp",
         "RLBOX/rlbox_unwrap.hpp",
         "RLBOX/rlbox_wrapper_traits.hpp",
-        "jpeg_handle.cc",
-        "jpeg_mem.cc",
-        "//tensorflow/core/platform:jpeg_hdrs",
-    ],
-    hdrs = [
-        "jpeg_handle.h",
-        "jpeg_mem.h",
+        "RLBOX/rlbox_wasm2c_sandbox.hpp",
+        "RLBOX/wasm-rt.h",
         "lib_struct_file.h",
     ],
     copts = tf_copts(),

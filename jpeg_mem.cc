@@ -35,7 +35,6 @@ using namespace rlbox;
 #include <memory>
 #include <string>
 #include <utility>
-#include <iostream>
 
 #include "tensorflow/core/lib/jpeg/jpeg_handle.h"
 #include "tensorflow/core/platform/dynamic_annotations.h"
@@ -47,6 +46,7 @@ template<typename T>
 using tainted_img = rlbox::tainted<T, sandbox_type_t>;
 
 #include "lib_struct_file.h"
+#include "jpeg_handle2.h"
 
 rlbox_load_structs_from_library(jpeglib);
 
@@ -201,12 +201,11 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   }
 
   // Initialize JPEG Decompression Object
-  sandbox.invoke_sandbox_function(jpeg_CreateDecompress, p_cinfo, JPEG_LIB_VERSION, (size_t) sizeof(struct jpeg_decompress_struct));
+  sandbox.invoke_sandbox_function(jpeg_CreateDecompress, p_cinfo, JPEG_LIB_VERSION, 464);
   sandbox.invoke_sandbox_function(SetSrc, p_cinfo, unchecked_srcdata, datasize, flags.try_recover_truncated_jpeg);
  
   // Read File Paramters
   sandbox.invoke_sandbox_function(jpeg_read_header, p_cinfo, TRUE);
-  std::cout << "Made it 207" << std::endl;  
   // Set components automatically if desired, autoconverting cmyk to rgb.
   
   // We copy and verify here because we handle all cases in the switch statement below
@@ -778,7 +777,6 @@ uint8* UncompressLow(const void* srcdata, FewerArgsForCompiler* argball) {
   callback.unregister();
   app_ptr.unregister();
   sandbox.destroy_sandbox();
-  std::cout << "Made it to the end" << std::endl;
   return dstdata;
 }
 }  // anonymous namespace

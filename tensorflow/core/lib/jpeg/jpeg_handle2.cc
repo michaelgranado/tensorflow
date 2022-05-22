@@ -19,22 +19,11 @@ limitations under the License.
 // We are filling out stubs required by jpeglib, those stubs are private to
 // the implementation, we are just making available JPGMemSrc, JPGMemDest
 
-#include "tensorflow/core/lib/jpeg/jpeg_handle.h"
-
+#include "jpeg_handle.h"
 #include <setjmp.h>
 #include <stddef.h>
 
-#include "tensorflow/core/platform/logging.h"
-
-namespace tensorflow {
-namespace jpeg {
-
-void CatchError(j_common_ptr cinfo) {
-  (*cinfo->err->output_message)(cinfo);
-  jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(cinfo->client_data);
-  jpeg_destroy(cinfo);
-  longjmp(*jpeg_jmpbuf, 1);
-}
+extern "C" {
 
 // *****************************************************************************
 // *****************************************************************************
@@ -42,72 +31,12 @@ void CatchError(j_common_ptr cinfo) {
 // Destination functions
 
 // -----------------------------------------------------------------------------
-void MemInitDestination(j_compress_ptr cinfo) {
-  MemDestMgr *dest = reinterpret_cast<MemDestMgr *>(cinfo->dest);
-  VLOG(1) << "Initializing buffer=" << dest->bufsize << " bytes";
-  dest->pub.next_output_byte = dest->buffer;
-  dest->pub.free_in_buffer = dest->bufsize;
-  dest->datacount = 0;
-  if (dest->dest) {
-    dest->dest->clear();
-  }
-}
-
-// -----------------------------------------------------------------------------
-boolean MemEmptyOutputBuffer(j_compress_ptr cinfo) {
-  MemDestMgr *dest = reinterpret_cast<MemDestMgr *>(cinfo->dest);
-  VLOG(1) << "Writing " << dest->bufsize << " bytes";
-  if (dest->dest) {
-    dest->dest->append(reinterpret_cast<char *>(dest->buffer), dest->bufsize);
-  }
-  dest->pub.next_output_byte = dest->buffer;
-  dest->pub.free_in_buffer = dest->bufsize;
-  return TRUE;
-}
-
-// -----------------------------------------------------------------------------
-void MemTermDestination(j_compress_ptr cinfo) {
-  MemDestMgr *dest = reinterpret_cast<MemDestMgr *>(cinfo->dest);
-  VLOG(1) << "Writing " << dest->bufsize - dest->pub.free_in_buffer << " bytes";
-  if (dest->dest) {
-    dest->dest->append(reinterpret_cast<char *>(dest->buffer),
-                       dest->bufsize - dest->pub.free_in_buffer);
-    VLOG(1) << "Total size= " << dest->dest->size();
-  }
-  dest->datacount = dest->bufsize - dest->pub.free_in_buffer;
-}
-
-// -----------------------------------------------------------------------------
-/*void SetDest(j_compress_ptr cinfo, void *buffer, int bufsize) {
-  SetDest(cinfo, buffer, bufsize, nullptr);
-}
-*/
-// -----------------------------------------------------------------------------
-void SetDest(j_compress_ptr cinfo, void *buffer, int bufsize,
-             tstring *destination) {
-  MemDestMgr *dest;
-  if (cinfo->dest == nullptr) {
-    cinfo->dest = reinterpret_cast<struct jpeg_destination_mgr *>(
-        (*cinfo->mem->alloc_small)(reinterpret_cast<j_common_ptr>(cinfo),
-                                   JPOOL_PERMANENT, sizeof(MemDestMgr)));
-  }
-
-  dest = reinterpret_cast<MemDestMgr *>(cinfo->dest);
-  dest->bufsize = bufsize;
-  dest->buffer = static_cast<JOCTET *>(buffer);
-  dest->dest = destination;
-  dest->pub.init_destination = MemInitDestination;
-  dest->pub.empty_output_buffer = MemEmptyOutputBuffer;
-  dest->pub.term_destination = MemTermDestination;
-}
-
-// *****************************************************************************
-// *****************************************************************************
 // *****************************************************************************
 // Source functions
 
-/*
 // -----------------------------------------------------------------------------
+namespace tensorflow{
+    namespace jpeg{
 void MemInitSource(j_decompress_ptr cinfo) {
   MemSourceMgr *src = reinterpret_cast<MemSourceMgr *>(cinfo->src);
   src->pub.next_input_byte = src->data;
@@ -181,6 +110,6 @@ void SetSrc(j_decompress_ptr cinfo, const void *data,
   src->pub.next_input_byte = nullptr;
   src->try_recover_truncated_jpeg = try_recover_truncated_jpeg;
 }
-*/
-}  // namespace jpeg
-}  // namespace tensorflow
+}
+}
+}

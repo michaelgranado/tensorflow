@@ -1,0 +1,43 @@
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// This file declares the functions and structures for memory I/O with libjpeg
+// These functions are not meant to be used directly, see jpeg_mem.h instead.
+
+
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+
+#include "jerror.h"  // from @libjpeg_turbo
+#include "jpeglib.h"
+
+extern "C" {
+// Handler for fatal JPEG library errors: clean up & return
+namespace tensorflow{
+    namespace jpeg{
+
+void SetSrc(j_decompress_ptr cinfo, const void *data,
+            unsigned long int datasize, bool try_recover_truncated_jpeg);
+}
+}
+}
+// JPEG destination: we will store all the data in a buffer "buffer" of total
+// size "bufsize", if the buffer overflows, we will be in trouble.
+//void SetDest(j_compress_ptr cinfo, void *buffer, int bufsize);
+// Same as above, except that buffer is only used as a temporary structure and
+// is emptied into "destination" as soon as it fills up.
+
